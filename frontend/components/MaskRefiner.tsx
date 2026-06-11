@@ -23,8 +23,10 @@ export default function MaskRefiner({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
 
-  const [brushMode, setBrushMode] = useState<'erase' | 'restore' | 'pan'>('erase');
+  const [brushMode, setBrushMode] = useState<'erase' | 'restore' | 'pan' | 'wand'>('erase');
   const [brushSize, setBrushSize] = useState<number>(20);
+  const [wandTolerance, setWandTolerance] = useState<number>(30);
+  const [wandAction, setWandAction] = useState<'erase' | 'restore'>('erase');
   const [underlayOpacity, setUnderlayOpacity] = useState<number>(0.35);
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
   const [lastPos, setLastPos] = useState<{ x: number; y: number } | null>(null);
@@ -286,6 +288,99 @@ export default function MaskRefiner({
     }
   }, []);
 
+  const runMagicWand = useCallback((startX: number, startY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const originalImg = originalImageRef.current;
+    if (!originalImg) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+
+    const x = Math.floor(startX);
+    const y = Math.floor(startY);
+    if (x < 0 || x >= w || y < 0 || y >= h) return;
+
+    // 1. Get original image pixels
+    const offscreen = document.createElement('canvas');
+    offscreen.width = w;
+    offscreen.height = h;
+    const offscreenCtx = offscreen.getContext('2d');
+    if (!offscreenCtx) return;
+    offscreenCtx.drawImage(originalImg, 0, 0, w, h);
+    const origData = offscreenCtx.getImageData(0, 0, w, h);
+    const origPixels = origData.data;
+
+    // 2. Get current mask pixels
+    const canvasData = ctx.getImageData(0, 0, w, h);
+    const canvasPixels = canvasData.data;
+
+    // 3. Flood fill using a flat Int32Array queue
+    const startIdx = (y * w + x) * 4;
+    const startR = origPixels[startIdx];
+    const startG = origPixels[startIdx + 1];
+    const startB = origPixels[startIdx + 2];
+
+    const visited = new Uint8Array(w * h);
+    const queue = new Int32Array(w * h * 2);
+    let head = 0;
+    let tail = 0;
+
+    queue[tail++] = x;
+    queue[tail++] = y;
+    visited[y * w + x] = 1;
+
+    const dx = [0, 0, 1, -1];
+    const dy = [1, -1, 0, 0];
+    const tolSq = wandTolerance * wandTolerance;
+
+    while (head < tail) {
+      const cx = queue[head++];
+      const cy = queue[head++];
+      const idx = cy * w + cx;
+      const pixelIdx = idx * 4;
+
+      const r = origPixels[pixelIdx];
+      const g = origPixels[pixelIdx + 1];
+      const b = origPixels[pixelIdx + 2];
+
+      const dR = r - startR;
+      const dG = g - startG;
+      const dB = b - startB;
+      const distSq = dR * dR + dG * dG + dB * dB;
+
+      if (distSq <= tolSq * 3) {
+        if (wandAction === 'erase') {
+          canvasPixels[pixelIdx + 3] = 0;
+        } else {
+          canvasPixels[pixelIdx] = origPixels[pixelIdx];
+          canvasPixels[pixelIdx + 1] = origPixels[pixelIdx + 1];
+          canvasPixels[pixelIdx + 2] = origPixels[pixelIdx + 2];
+          canvasPixels[pixelIdx + 3] = origPixels[pixelIdx + 3];
+        }
+
+        for (let i = 0; i < 4; i++) {
+          const nx = cx + dx[i];
+          const ny = cy + dy[i];
+          if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+            const nIdx = ny * w + nx;
+            if (!visited[nIdx]) {
+              visited[nIdx] = 1;
+              queue[tail++] = nx;
+              queue[tail++] = ny;
+            }
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(canvasData, 0, 0);
+    saveState();
+  }, [wandTolerance, wandAction, saveState]);
+
   const handleStartDraw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     if (isLoading || isSaving) return;
     
@@ -296,6 +391,11 @@ export default function MaskRefiner({
 
     const coords = getCoordinates(e);
     setCursorPos(coords.display);
+
+    if (brushMode === 'wand') {
+      runMagicWand(coords.logical.x, coords.logical.y);
+      return;
+    }
 
     const isPanActive = brushMode === 'pan' || spacePressed;
     if (isPanActive) {
@@ -330,7 +430,7 @@ export default function MaskRefiner({
       return;
     }
 
-    if (brushMode === 'pan') return;
+    if (brushMode === 'pan' || brushMode === 'wand') return;
 
     if (!isDrawing || !lastPos) return;
 
@@ -578,6 +678,21 @@ export default function MaskRefiner({
               </button>
               <button
                 type="button"
+                onClick={() => setBrushMode('wand')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] font-medium transition ${
+                  brushMode === 'wand'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#262626]'
+                }`}
+                title="AI Magic Wand Tool"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                </svg>
+                Magic Wand
+              </button>
+              <button
+                type="button"
                 onClick={() => setBrushMode('pan')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] font-medium transition ${
                   brushMode === 'pan'
@@ -593,19 +708,59 @@ export default function MaskRefiner({
               </button>
             </div>
 
-            {/* Brush Size */}
-            <div className="flex items-center gap-2 border-l border-[#262626] pl-4">
-              <span className="text-[#A3A3A3] font-medium">Brush Size:</span>
-              <input
-                type="range"
-                min="1"
-                max="80"
-                value={brushSize}
-                onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                className="w-24 h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
-              />
-              <span className="font-semibold tabular-nums w-8 text-center">{brushSize}px</span>
-            </div>
+            {/* Brush Size / Wand Controls */}
+            {brushMode === 'wand' ? (
+              <div className="flex items-center gap-4 border-l border-[#262626] pl-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[#A3A3A3] font-medium">Action:</span>
+                  <div className="flex p-0.5 rounded-[6px] bg-[#171717] border border-[#262626] text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setWandAction('erase')}
+                      className={`px-2 py-1 rounded-[4px] font-semibold transition ${
+                        wandAction === 'erase' ? 'bg-[#EF4444] text-white shadow-sm' : 'text-[#A3A3A3] hover:text-white'
+                      }`}
+                    >
+                      Erase
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWandAction('restore')}
+                      className={`px-2 py-1 rounded-[4px] font-semibold transition ${
+                        wandAction === 'restore' ? 'bg-[#22C55E] text-white shadow-sm' : 'text-[#A3A3A3] hover:text-white'
+                      }`}
+                    >
+                      Restore
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 border-l border-[#262626] pl-4">
+                  <span className="text-[#A3A3A3] font-medium">Tolerance:</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={wandTolerance}
+                    onChange={(e) => setWandTolerance(parseInt(e.target.value))}
+                    className="w-24 h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
+                  />
+                  <span className="font-semibold tabular-nums w-8 text-center">{wandTolerance}</span>
+                </div>
+              </div>
+            ) : brushMode !== 'pan' ? (
+              <div className="flex items-center gap-2 border-l border-[#262626] pl-4">
+                <span className="text-[#A3A3A3] font-medium">Brush Size:</span>
+                <input
+                  type="range"
+                  min="1"
+                  max="80"
+                  value={brushSize}
+                  onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                  className="w-24 h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
+                />
+                <span className="font-semibold tabular-nums w-8 text-center">{brushSize}px</span>
+              </div>
+            ) : null}
 
             {/* Zoom Controls */}
             <div className="flex items-center gap-1.5 border-l border-[#262626] pl-4">
@@ -726,19 +881,35 @@ export default function MaskRefiner({
                 className="relative z-10 w-full h-full object-contain block bg-transparent"
               />
 
-              {/* 3. Brush Size Hover Cursor */}
+              {/* 3. Brush Size or Crosshair Hover Cursor */}
               {showCursor && !spacePressed && (
-                <div
-                  className="absolute z-20 rounded-full pointer-events-none transition-shadow border border-white shadow-[0_0_8px_rgba(0,0,0,0.6)]"
-                  style={{
-                    left: cursorPos.x - displayBrushSize / 2,
-                    top: cursorPos.y - displayBrushSize / 2,
-                    width: displayBrushSize,
-                    height: displayBrushSize,
-                    backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(34, 197, 94, 0.25)',
-                    borderColor: brushMode === 'erase' ? '#EF4444' : '#22C55E',
-                  }}
-                />
+                brushMode === 'wand' ? (
+                  <div
+                    className="absolute z-20 pointer-events-none flex items-center justify-center"
+                    style={{
+                      left: cursorPos.x - 12,
+                      top: cursorPos.y - 12,
+                      width: 24,
+                      height: 24,
+                    }}
+                  >
+                    <div className="absolute h-4 w-0.5 bg-white shadow-md" />
+                    <div className="absolute w-4 h-0.5 bg-white shadow-md" />
+                    <div className="h-1.5 w-1.5 rounded-full bg-purple-500 shadow-md border border-white" />
+                  </div>
+                ) : (
+                  <div
+                    className="absolute z-20 rounded-full pointer-events-none transition-shadow border border-white shadow-[0_0_8px_rgba(0,0,0,0.6)]"
+                    style={{
+                      left: cursorPos.x - displayBrushSize / 2,
+                      top: cursorPos.y - displayBrushSize / 2,
+                      width: displayBrushSize,
+                      height: displayBrushSize,
+                      backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(34, 197, 94, 0.25)',
+                      borderColor: brushMode === 'erase' ? '#EF4444' : '#22C55E',
+                    }}
+                  />
+                )
               )}
             </div>
 

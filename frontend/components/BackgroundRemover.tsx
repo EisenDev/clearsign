@@ -184,9 +184,28 @@ export default function BackgroundRemover({
   const [bgColor, setBgColor] = useState<string>('#FFFFFF');
   const [bgGradient, setBgGradient] = useState<string>('linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%)');
   const [bgImage, setBgImage] = useState<string | null>(null);
-  const [shadowEffect, setShadowEffect] = useState<'none' | 'soft' | 'deep' | 'glow'>('none');
-  const [aspectRatio, setAspectRatio] = useState<'original' | '1:1' | '4:5' | '16:9'>('original');
+  const [aspectRatio, setAspectRatio] = useState<'original' | '1:1' | '4:5' | '16:9' | '9:16' | '2:3'>('original');
   const [padding, setPadding] = useState<number>(0);
+  const [privacyMode, setPrivacyMode] = useState<boolean>(false);
+  const [edgeMode, setEdgeMode] = useState<'default' | 'sharp' | 'soft' | 'adaptive'>('default');
+  
+  // Color Harmonization
+  const [harmonizeAmount, setHarmonizeAmount] = useState<number>(0);
+  
+  // 3D Shadow Generator
+  const [shadowType, setShadowType] = useState<'none' | 'drop' | 'contact'>('none');
+  const [shadowAngle, setShadowAngle] = useState<number>(135);
+  const [shadowDistance, setShadowDistance] = useState<number>(15);
+  const [shadowBlur, setShadowBlur] = useState<number>(15);
+  const [shadowOpacity, setShadowOpacity] = useState<number>(35);
+  const [shadowColor, setShadowColor] = useState<string>('#000000');
+  
+  const [contactShadowScale, setContactShadowScale] = useState<number>(15);
+  const [contactShadowBlur, setContactShadowBlur] = useState<number>(15);
+  const [contactShadowOpacity, setContactShadowOpacity] = useState<number>(45);
+
+  // Subject alignment preset
+  const [alignSubject, setAlignSubject] = useState<'center' | 'bottom'>('center');
 
   // Split slider workspace state
   const [sliderPosition, setSliderPosition] = useState<number>(50);
@@ -297,6 +316,47 @@ export default function BackgroundRemover({
   const processItem = useCallback(
     async (itemId: string, file: File, itemMode?: RemovalMode): Promise<void> => {
       const mode = itemMode ?? selectedMode;
+
+      if (privacyMode) {
+        setItems((prev) =>
+          prev.map((i) => (i.id === itemId ? { ...i, status: 'PROCESSING', error: null, progress: 10 } : i)),
+        );
+        try {
+          // Dynamic import of browser-only background removal library with type assertion
+          const imglyRemoveBackground = (await import('@imgly/background-removal')).default as any;
+          
+          setItems((prev) =>
+            prev.map((i) => (i.id === itemId ? { ...i, progress: 30 } : i)),
+          );
+
+          const processedBlob = await imglyRemoveBackground(file, {
+            progress: (key: string, current: number, total: number) => {
+              const pct = Math.round((current / total) * 50) + 40; // 40% to 90%
+              setItems((prev) =>
+                prev.map((i) =>
+                  i.id === itemId ? { ...i, progress: Math.min(95, pct) } : i
+                )
+              );
+            }
+          });
+
+          const localUrl = URL.createObjectURL(processedBlob);
+          setItems((prev) =>
+            prev.map((i) =>
+              i.id === itemId
+                ? { ...i, status: 'COMPLETED', outputUrl: localUrl, progress: 100 }
+                : i
+            )
+          );
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Local privacy processing failed.';
+          setItems((prev) =>
+            prev.map((i) => (i.id === itemId ? { ...i, status: 'FAILED', error: message, progress: 100 } : i)),
+          );
+        }
+        return;
+      }
+
       setItems((prev) =>
         prev.map((i) => (i.id === itemId ? { ...i, status: 'UPLOADING', error: null, progress: 15 } : i)),
       );
@@ -378,7 +438,7 @@ export default function BackgroundRemover({
         await fetchHistory();
       }
     },
-    [apiBaseUrl, fetchHistory, uploadSourceImage, userId, selectedMode, alphaMattingEnabled, shadowRemovalEnabled, edgeFeather, defringeEnabled],
+    [apiBaseUrl, fetchHistory, uploadSourceImage, userId, selectedMode, alphaMattingEnabled, shadowRemovalEnabled, edgeFeather, defringeEnabled, privacyMode],
   );
 
   const toggleSelectJob = useCallback((jobId: string) => {
@@ -593,11 +653,42 @@ export default function BackgroundRemover({
     setGlobalError(null);
   }, [items]);
 
+  const dropShadowFilterStyle = useMemo(() => {
+    const angleRad = (shadowAngle * Math.PI) / 180;
+    const dx = Math.round(shadowDistance * Math.cos(angleRad));
+    const dy = Math.round(shadowDistance * Math.sin(angleRad));
+    
+    const hexToRgba = (hexStr: string, alphaVal: number): string => {
+      const cleanHex = hexStr.replace(/^#/, '');
+      const num = parseInt(cleanHex, 16);
+      const r = (num >> 16) & 255;
+      const g = (num >> 8) & 255;
+      const b = num & 255;
+      return `rgba(${r}, ${g}, ${b}, ${alphaVal})`;
+    };
+
+    const colorRgba = hexToRgba(shadowColor, shadowOpacity / 100);
+    return `drop-shadow(${dx}px ${dy}px ${shadowBlur}px ${colorRgba})`;
+  }, [shadowAngle, shadowDistance, shadowBlur, shadowColor, shadowOpacity]);
+
+  const bgAverageColor = useMemo(() => {
+    if (bgType === 'color') return bgColor;
+    if (bgType === 'gradient') {
+      if (bgGradient.includes('#FF6B6B')) return '#FF7C5D'; // sunset avg
+      if (bgGradient.includes('#0575E6')) return '#02B3A3'; // northern lights avg
+      if (bgGradient.includes('#DA4453')) return '#B1325E'; // royal plum avg
+      if (bgGradient.includes('#11998e')) return '#24C480'; // emerald sea avg
+      return '#DA389C'; // cyberpunk avg
+    }
+    if (bgType === 'image') return '#D4D4D4'; // default neutral gray
+    return 'transparent';
+  }, [bgType, bgColor, bgGradient]);
+
   const handleDownload = useCallback(async (item: BatchItem): Promise<void> => {
     if (!item.outputUrl) return;
 
-    // Fast-path: If transparent, no shadow, original aspect ratio and 0 padding, download raw image
-    if (bgType === 'transparent' && shadowEffect === 'none' && aspectRatio === 'original' && padding === 0) {
+    // Fast-path: If transparent, no shadow, original aspect ratio, 0 padding, and 0 harmonization, download raw image
+    if (bgType === 'transparent' && shadowType === 'none' && aspectRatio === 'original' && padding === 0 && harmonizeAmount === 0) {
       try {
         const response = await fetch(item.outputUrl);
         if (!response.ok) throw new Error(`HTTP error ${response.status}`);
@@ -609,7 +700,7 @@ export default function BackgroundRemover({
       }
     }
 
-    setIsZipping(true); // Re-use zipping spinner overlay for loading state
+    setIsZipping(true);
     try {
       // 1. Load the processed subject image
       const img = new Image();
@@ -657,6 +748,20 @@ export default function BackgroundRemover({
         } else {
           canvasWidth = Math.round(canvasHeight * targetAspect);
         }
+      } else if (aspectRatio === '9:16') {
+        const targetAspect = 9 / 16;
+        if (canvasWidth / canvasHeight > targetAspect) {
+          canvasHeight = Math.round(canvasWidth / targetAspect);
+        } else {
+          canvasWidth = Math.round(canvasHeight * targetAspect);
+        }
+      } else if (aspectRatio === '2:3') {
+        const targetAspect = 2 / 3;
+        if (canvasWidth / canvasHeight > targetAspect) {
+          canvasHeight = Math.round(canvasWidth / targetAspect);
+        } else {
+          canvasWidth = Math.round(canvasHeight * targetAspect);
+        }
       }
 
       canvas.width = canvasWidth;
@@ -691,22 +796,7 @@ export default function BackgroundRemover({
         ctx.drawImage(bgImg, x, y, w, h);
       }
 
-      // 4. Setup Shadow parameters
-      if (shadowEffect !== 'none') {
-        ctx.shadowColor = shadowEffect === 'glow' ? 'rgba(59, 130, 246, 0.65)' : 'rgba(0, 0, 0, 0.35)';
-        if (shadowEffect === 'soft') {
-          ctx.shadowBlur = Math.round(canvasWidth * 0.03);
-          ctx.shadowOffsetY = Math.round(canvasHeight * 0.015);
-        } else if (shadowEffect === 'deep') {
-          ctx.shadowBlur = Math.round(canvasWidth * 0.08);
-          ctx.shadowOffsetY = Math.round(canvasHeight * 0.04);
-        } else if (shadowEffect === 'glow') {
-          ctx.shadowBlur = Math.round(canvasWidth * 0.05);
-          ctx.shadowOffsetY = 0;
-        }
-      }
-
-      // 5. Draw Subject centering with padding
+      // Calculate subject draw dimensions and positions based on padding
       const paddingPx = (padding / 100) * Math.min(canvasWidth, canvasHeight);
       const availableWidth = canvasWidth - paddingPx * 2;
       const availableHeight = canvasHeight - paddingPx * 2;
@@ -721,14 +811,84 @@ export default function BackgroundRemover({
       }
 
       const drawX = (canvasWidth - drawWidth) / 2;
-      const drawY = (canvasHeight - drawHeight) / 2;
+      let drawY = (canvasHeight - drawHeight) / 2;
+      
+      // Handle alignment: bottom vs center
+      if (alignSubject === 'bottom') {
+        drawY = canvasHeight - drawHeight - paddingPx;
+      }
 
+      // 4. Setup Contact Shadow (drawn UNDER the subject)
+      if (shadowType === 'contact') {
+        ctx.save();
+        const subjectCenterX = drawX + drawWidth / 2;
+        const subjectBottomY = drawY + drawHeight;
+        const shadowWidth = drawWidth * 0.85;
+        
+        ctx.translate(subjectCenterX, subjectBottomY);
+        ctx.scale(1, 0.15); // flat ellipse
+        
+        const shadowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, shadowWidth / 2);
+        const op = contactShadowOpacity / 100;
+        shadowGrad.addColorStop(0, `rgba(0, 0, 0, ${op})`);
+        shadowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        
+        ctx.fillStyle = shadowGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, shadowWidth / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // 5. Setup Drop Shadow parameters (drawn WITH the subject)
+      if (shadowType === 'drop') {
+        const angleRad = (shadowAngle * Math.PI) / 180;
+        const dx = Math.round(shadowDistance * Math.cos(angleRad));
+        const dy = Math.round(shadowDistance * Math.sin(angleRad));
+        
+        // Hex to RGBA inline helper
+        const hexToRgba = (hexStr: string, alphaVal: number): string => {
+          const cleanHex = hexStr.replace(/^#/, '');
+          const num = parseInt(cleanHex, 16);
+          const r = (num >> 16) & 255;
+          const g = (num >> 8) & 255;
+          const b = num & 255;
+          return `rgba(${r}, ${g}, ${b}, ${alphaVal})`;
+        };
+
+        ctx.shadowColor = hexToRgba(shadowColor, shadowOpacity / 100);
+        ctx.shadowBlur = shadowBlur;
+        ctx.shadowOffsetX = dx;
+        ctx.shadowOffsetY = dy;
+      }
+
+      // 6. Draw Subject
       ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
 
-      // Reset shadow parameters
+      // Reset shadow parameters immediately
       ctx.shadowBlur = 0;
       ctx.shadowOffsetX = 0;
       ctx.shadowOffsetY = 0;
+
+      // 7. Apply Color Harmonization (drawn OVER the subject and masked)
+      if (harmonizeAmount > 0) {
+        const tintCanvas = document.createElement('canvas');
+        tintCanvas.width = canvasWidth;
+        tintCanvas.height = canvasHeight;
+        const tintCtx = tintCanvas.getContext('2d');
+        if (tintCtx) {
+          tintCtx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+          tintCtx.globalCompositeOperation = 'source-in';
+          tintCtx.fillStyle = bgAverageColor;
+          tintCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+          
+          ctx.save();
+          ctx.globalCompositeOperation = 'color';
+          ctx.globalAlpha = (harmonizeAmount / 100) * 0.35;
+          ctx.drawImage(tintCanvas, 0, 0);
+          ctx.restore();
+        }
+      }
 
       canvas.toBlob((blob) => {
         if (blob) {
@@ -744,7 +904,7 @@ export default function BackgroundRemover({
     } finally {
       setIsZipping(false);
     }
-  }, [bgType, bgColor, bgGradient, bgImage, shadowEffect, aspectRatio, padding]);
+  }, [bgType, bgColor, bgGradient, bgImage, shadowType, shadowAngle, shadowDistance, shadowBlur, shadowOpacity, shadowColor, contactShadowBlur, contactShadowOpacity, contactShadowScale, aspectRatio, padding, alignSubject, harmonizeAmount, bgAverageColor]);
 
   const handleDownloadAll = useCallback(async (currentItems: BatchItem[]): Promise<void> => {
     const completed = currentItems.filter((i) => i.status === 'COMPLETED' && i.outputUrl);
@@ -801,12 +961,7 @@ export default function BackgroundRemover({
     return {};
   }, [bgType, bgColor, bgGradient, bgImage]);
 
-  const shadowFilter = useMemo(() => {
-    if (shadowEffect === 'soft') return 'drop-shadow(0 6px 12px rgba(0,0,0,0.18))';
-    if (shadowEffect === 'deep') return 'drop-shadow(0 18px 36px rgba(0,0,0,0.32))';
-    if (shadowEffect === 'glow') return 'drop-shadow(0 0 25px rgba(59, 130, 246, 0.45))';
-    return 'none';
-  }, [shadowEffect]);
+
 
   const currentMode = useMemo(() => MODES.find((m) => m.id === selectedMode)!, [selectedMode]);
 
@@ -827,6 +982,29 @@ export default function BackgroundRemover({
             <h1 className="app-title text-[#111111] leading-none select-none">ClearSign</h1>
           </div>
           <div className="flex items-center gap-3">
+            {/* Zero-Cloud Privacy Mode Switch */}
+            <div className="flex items-center gap-2 mr-2">
+              <label htmlFor="privacy-toggle" className="text-[12px] font-semibold text-[#737373] flex items-center gap-1 cursor-pointer">
+                <span>🔒 Privacy Mode</span>
+              </label>
+              <button
+                type="button"
+                id="privacy-toggle"
+                onClick={() => setPrivacyMode(!privacyMode)}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  privacyMode ? 'bg-green-600' : 'bg-[#E5E5E5]'
+                }`}
+                role="switch"
+                aria-checked={privacyMode}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    privacyMode ? 'translate-x-4' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
             <span className="text-[12px] text-[#737373] bg-[#F4F4F4] px-2.5 py-1 rounded-full font-medium">
               {stats.total} {stats.total === 1 ? 'file' : 'files'} ready
             </span>
@@ -920,7 +1098,50 @@ export default function BackgroundRemover({
           {/* Precision Controls Panel */}
           {showPrecisionPanel && (
             <div className="mt-4 pt-4 border-t border-[#F0F0F0]">
-              <p className="text-[12px] font-semibold text-[#737373] uppercase tracking-[0.08em] mb-3">Precision Controls</p>
+              {/* Edge Profile Treatment Presets */}
+              <div className="flex flex-col gap-2 mb-4">
+                <span className="text-[12px] font-semibold text-[#737373] uppercase tracking-[0.08em]">Edge Profile Treatment</span>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {(['default', 'sharp', 'soft', 'adaptive'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => {
+                        setEdgeMode(mode);
+                        if (mode === 'sharp') {
+                          setAlphaMattingEnabled(false);
+                          setEdgeFeather(0);
+                          setDefringeEnabled(true);
+                        } else if (mode === 'soft') {
+                          setAlphaMattingEnabled(true);
+                          setEdgeFeather(2);
+                          setDefringeEnabled(false);
+                        } else if (mode === 'adaptive') {
+                          setAlphaMattingEnabled(true);
+                          setEdgeFeather(1);
+                          setDefringeEnabled(true);
+                        } else {
+                          // default
+                          setAlphaMattingEnabled(false);
+                          setEdgeFeather(0);
+                          setDefringeEnabled(false);
+                        }
+                      }}
+                      className={`py-1.5 px-3 rounded-[6px] border text-[11px] font-semibold transition ${
+                        edgeMode === mode
+                          ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                          : 'bg-white border-[#E5E5E5] text-[#737373] hover:border-[#D4D4D4] hover:text-[#111111]'
+                      }`}
+                    >
+                      {mode === 'default' ? 'Default' :
+                       mode === 'sharp' ? 'Sharp / Solid' :
+                       mode === 'soft' ? 'Fuzzy / Hair' : 'Adaptive AI'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-[12px] font-semibold text-[#737373] uppercase tracking-[0.08em] mb-3">Advanced Precision Controls</p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
 
                 {/* Alpha Matting */}
@@ -1396,6 +1617,8 @@ export default function BackgroundRemover({
                               aspectRatio === '1:1' ? 'aspect-square h-auto max-h-[380px]' :
                               aspectRatio === '4:5' ? 'aspect-[4/5] h-auto max-h-[380px]' :
                               aspectRatio === '16:9' ? 'aspect-[16/9] h-auto max-h-[380px]' :
+                              aspectRatio === '9:16' ? 'aspect-[9/16] h-auto max-h-[380px]' :
+                              aspectRatio === '2:3' ? 'aspect-[2/3] h-auto max-h-[380px]' :
                               'h-[380px]'
                             }`}
                             style={previewBgStyle}
@@ -1405,30 +1628,81 @@ export default function BackgroundRemover({
                             onTouchStart={() => setIsDraggingSlider(true)}
                           >
                             {/* After (processed) */}
-                            <div className="absolute inset-0 w-full h-full flex items-center justify-center">
-                              <img 
-                                src={selectedItem.outputUrl} 
-                                alt="Processed Result" 
-                                className="max-h-[85%] max-w-[85%] object-contain pointer-events-none transition-all duration-200" 
+                            <div className="absolute inset-0 w-full h-full flex items-center justify-center pointer-events-none">
+                              <div 
+                                className="relative max-h-[85%] max-w-[85%] w-full h-full flex items-center justify-center"
                                 style={{ 
-                                  filter: shadowFilter,
                                   padding: padding > 0 ? `${padding}%` : undefined
                                 }}
-                              />
+                              >
+                                <img 
+                                  src={selectedItem.outputUrl} 
+                                  alt="Processed Result" 
+                                  className="max-h-full max-w-full object-contain transition-all duration-200" 
+                                  style={{ 
+                                    filter: shadowType === 'drop' ? dropShadowFilterStyle : 'none',
+                                    alignSelf: alignSubject === 'bottom' ? 'flex-end' : 'center',
+                                  }}
+                                />
+                                
+                                {/* Contact Shadow overlay */}
+                                {shadowType === 'contact' && (
+                                  <div 
+                                    className="absolute rounded-full pointer-events-none"
+                                    style={{
+                                      bottom: '0px',
+                                      left: '50%',
+                                      transform: 'translateX(-50%) scaleY(0.15)',
+                                      width: '85%',
+                                      height: `${contactShadowScale * 2}px`,
+                                      background: `radial-gradient(ellipse at center, rgba(0,0,0,${contactShadowOpacity / 100}) 0%, rgba(0,0,0,0) 70%)`,
+                                      filter: `blur(${contactShadowBlur}px)`,
+                                    }}
+                                  />
+                                )}
+
+                                {/* Color Harmonization overlay */}
+                                {harmonizeAmount > 0 && (
+                                  <div 
+                                    className="absolute inset-0 pointer-events-none"
+                                    style={{
+                                      backgroundColor: bgAverageColor,
+                                      mixBlendMode: 'color',
+                                      opacity: (harmonizeAmount / 100) * 0.35,
+                                      WebkitMaskImage: `url(${selectedItem.outputUrl})`,
+                                      WebkitMaskSize: 'contain',
+                                      WebkitMaskPosition: 'center',
+                                      WebkitMaskRepeat: 'no-repeat',
+                                      maskImage: `url(${selectedItem.outputUrl})`,
+                                      maskSize: 'contain',
+                                      maskPosition: 'center',
+                                      maskRepeat: 'no-repeat',
+                                      alignSelf: alignSubject === 'bottom' ? 'flex-end' : 'center',
+                                    }}
+                                  />
+                                )}
+                              </div>
                             </div>
                             {/* Before (original) clipped */}
                             <div
                               className="absolute inset-0 w-full h-full bg-[#FAFAFA] flex items-center justify-center pointer-events-none"
                               style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
                             >
-                              <img 
-                                src={selectedItem.localPreviewUrl} 
-                                alt="Original Source" 
-                                className="max-h-[85%] max-w-[85%] object-contain pointer-events-none" 
+                              <div 
+                                className="relative max-h-[85%] max-w-[85%] w-full h-full flex items-center justify-center"
                                 style={{ 
                                   padding: padding > 0 ? `${padding}%` : undefined
                                 }}
-                              />
+                              >
+                                <img 
+                                  src={selectedItem.localPreviewUrl} 
+                                  alt="Original Source" 
+                                  className="max-h-full max-w-full object-contain" 
+                                  style={{ 
+                                    alignSelf: alignSubject === 'bottom' ? 'flex-end' : 'center',
+                                  }}
+                                />
+                              </div>
                             </div>
                             {/* Divider */}
                             <div className="absolute top-0 bottom-0 w-[2px] bg-white shadow-[0_0_8px_rgba(0,0,0,0.4)] pointer-events-none" style={{ left: `${sliderPosition}%` }}>
@@ -1564,27 +1838,151 @@ export default function BackgroundRemover({
                           )}
                         </div>
 
+                        {/* Color Harmonization */}
+                        <div className="flex flex-col gap-2 border-t border-[#EFEFEF] pt-3">
+                          <label className="text-[12px] font-semibold text-[#111111] flex items-center justify-between">
+                            <span>Color Harmonization</span>
+                            <span className="text-[11px] font-semibold text-blue-600">{harmonizeAmount}%</span>
+                          </label>
+                          <p className="text-[10px] text-[#A3A3A3] leading-snug">Blend subject highlights and edges with the background color.</p>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={harmonizeAmount}
+                            onChange={(e) => setHarmonizeAmount(Number(e.target.value))}
+                            className="w-full h-1.5 accent-blue-600 cursor-pointer"
+                          />
+                        </div>
+
                         {/* Shadow Effects Selection */}
-                        <div className="flex flex-col gap-2">
-                          <label className="text-[12px] font-semibold text-[#111111]">Shadow Effect</label>
-                          <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                            {(['none', 'soft', 'deep', 'glow'] as const).map((eff) => (
+                        <div className="flex flex-col gap-2 border-t border-[#EFEFEF] pt-3">
+                          <label className="text-[12px] font-semibold text-[#111111]">3D Shadow Generator</label>
+                          <div className="grid grid-cols-3 gap-1.5 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
+                            {(['none', 'drop', 'contact'] as const).map((type) => (
                               <button
-                                key={eff}
+                                key={type}
                                 type="button"
-                                onClick={() => setShadowEffect(eff)}
-                                className={`py-1.5 px-2 rounded-[6px] border font-medium transition text-center ${
-                                  shadowEffect === eff
-                                    ? 'bg-[#111111] border-[#111111] text-white shadow-sm'
-                                    : 'bg-white border-[#E5E5E5] text-[#737373] hover:border-[#A3A3A3] hover:text-[#111111]'
+                                onClick={() => setShadowType(type)}
+                                className={`py-1 rounded-[6px] font-medium transition text-center ${
+                                  shadowType === type
+                                    ? 'bg-white text-[#111111] shadow-sm'
+                                    : 'text-[#737373] hover:text-[#111111]'
                                 }`}
                               >
-                                {eff === 'none' ? 'None' :
-                                 eff === 'soft' ? 'Soft' :
-                                 eff === 'deep' ? 'Deep' : 'Glow'}
+                                {type === 'none' ? 'None' :
+                                 type === 'drop' ? 'Drop' : 'Contact'}
                               </button>
                             ))}
                           </div>
+
+                          {/* Drop Shadow Controls */}
+                          {shadowType === 'drop' && (
+                            <div className="flex flex-col gap-2.5 mt-2 bg-white border border-[#EFEFEF] rounded-[8px] p-2.5 shadow-sm text-[11px]">
+                              {/* Angle & Distance */}
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[#737373] font-medium">Angle: {shadowAngle}°</span>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="360"
+                                    value={shadowAngle}
+                                    onChange={(e) => setShadowAngle(Number(e.target.value))}
+                                    className="w-full h-1 accent-blue-600 cursor-pointer"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[#737373] font-medium">Distance: {shadowDistance}px</span>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="50"
+                                    value={shadowDistance}
+                                    onChange={(e) => setShadowDistance(Number(e.target.value))}
+                                    className="w-full h-1 accent-blue-600 cursor-pointer"
+                                  />
+                                </div>
+                              </div>
+                              {/* Blur & Opacity */}
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[#737373] font-medium">Blur: {shadowBlur}px</span>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="80"
+                                    value={shadowBlur}
+                                    onChange={(e) => setShadowBlur(Number(e.target.value))}
+                                    className="w-full h-1 accent-blue-600 cursor-pointer"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[#737373] font-medium">Opacity: {shadowOpacity}%</span>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    value={shadowOpacity}
+                                    onChange={(e) => setShadowOpacity(Number(e.target.value))}
+                                    className="w-full h-1 accent-blue-600 cursor-pointer"
+                                  />
+                                </div>
+                              </div>
+                              {/* Shadow Color */}
+                              <div className="flex items-center justify-between border-t border-[#F5F5F5] pt-2">
+                                <span className="text-[#737373] font-medium">Color:</span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[10px] font-mono text-[#A3A3A3]">{shadowColor}</span>
+                                  <input
+                                    type="color"
+                                    value={shadowColor}
+                                    onChange={(e) => setShadowColor(e.target.value)}
+                                    className="h-5 w-5 rounded cursor-pointer border border-[#E5E5E5] p-0"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Contact Shadow Controls */}
+                          {shadowType === 'contact' && (
+                            <div className="flex flex-col gap-2.5 mt-2 bg-white border border-[#EFEFEF] rounded-[8px] p-2.5 shadow-sm text-[11px]">
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[#737373] font-medium">Blur: {contactShadowBlur}px</span>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="80"
+                                  value={contactShadowBlur}
+                                  onChange={(e) => setContactShadowBlur(Number(e.target.value))}
+                                  className="w-full h-1 accent-blue-600 cursor-pointer"
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[#737373] font-medium">Opacity: {contactShadowOpacity}%</span>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="100"
+                                  value={contactShadowOpacity}
+                                  onChange={(e) => setContactShadowOpacity(Number(e.target.value))}
+                                  className="w-full h-1 accent-blue-600 cursor-pointer"
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[#737373] font-medium">Flatness (Height Scale): {contactShadowScale}%</span>
+                                <input
+                                  type="range"
+                                  min="5"
+                                  max="30"
+                                  value={contactShadowScale}
+                                  onChange={(e) => setContactShadowScale(Number(e.target.value))}
+                                  className="w-full h-1 accent-blue-600 cursor-pointer"
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
 
                         {/* Layout & Margins Spacing */}
@@ -1593,8 +1991,8 @@ export default function BackgroundRemover({
                           
                           <div className="flex flex-col gap-1.5">
                             <span className="text-[11px] text-[#737373] font-medium">Aspect Ratio Preset</span>
-                            <div className="grid grid-cols-4 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[10px]">
-                              {(['original', '1:1', '4:5', '16:9'] as const).map((aspect) => (
+                            <div className="grid grid-cols-6 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[10px]">
+                              {(['original', '1:1', '4:5', '16:9', '9:16', '2:3'] as const).map((aspect) => (
                                 <button
                                   key={aspect}
                                   type="button"
@@ -1610,9 +2008,27 @@ export default function BackgroundRemover({
                           </div>
 
                           <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] text-[#737373] font-medium">Subject Alignment</span>
+                            <div className="grid grid-cols-2 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[10px]">
+                              {(['center', 'bottom'] as const).map((align) => (
+                                <button
+                                  key={align}
+                                  type="button"
+                                  onClick={() => setAlignSubject(align)}
+                                  className={`py-1 rounded-[6px] font-medium transition capitalize ${
+                                    alignSubject === align ? 'bg-white text-[#111111] shadow-sm' : 'text-[#737373] hover:text-[#111111]'
+                                  }`}
+                                >
+                                  {align}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-1.5">
                             <span className="text-[11px] text-[#737373] font-medium">Auto Padding Spacing</span>
-                            <div className="grid grid-cols-3 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[10px]">
-                              {([0, 10, 20] as const).map((pad) => (
+                            <div className="grid grid-cols-4 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[10px]">
+                              {([0, 10, 20, 30] as const).map((pad) => (
                                 <button
                                   key={pad}
                                   type="button"
