@@ -8,9 +8,10 @@ from uuid import uuid4
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-from app.core.job_store import JobStatus, create_job, get_job, list_jobs_by_user, delete_job, delete_jobs
+from app.core.job_store import JobStatus, create_job, get_job, list_jobs_by_user, delete_job, delete_jobs, update_job
 from app.core.settings import get_settings
 from app.workers.bg_removal import remove_background_task
+
 
 router = APIRouter(prefix="/api/media", tags=["media"])
 settings = get_settings()
@@ -184,3 +185,70 @@ async def batch_delete_jobs(payload: BatchDeleteRequest) -> dict[str, str]:
             pass
     deleted_count = delete_jobs(payload.job_ids)
     return {"detail": f"Successfully deleted {deleted_count} jobs."}
+
+
+@router.post(
+    "/jobs/{job_id}/refine",
+    response_model=JobStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def refine_job_output(
+    job_id: str,
+    file: UploadFile = File(...),
+) -> JobStatusResponse:
+    job_record = get_job(job_id)
+    if job_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job '{job_id}' was not found.",
+        )
+
+    if file.content_type != "image/png":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Refined output must be a PNG image.",
+        )
+
+    file_bytes = await file.read()
+
+    # Upload or save locally
+    if not all([
+        settings.r2_account_id,
+        settings.r2_access_key_id,
+        settings.r2_secret_access_key,
+        settings.r2_bucket_name,
+        settings.r2_public_domain,
+    ]):
+        local_path = settings.processed_dir / f"{job_id}.png"
+        local_path.write_bytes(file_bytes)
+        output_url = f"{settings.backend_base_url}/storage/processed/{job_id}.png"
+    else:
+        from app.workers.bg_removal import build_output_object_key, get_r2_client, build_public_output_url, infer_source_filename
+        import io
+        object_key = build_output_object_key(job_id)
+        r2_client = get_r2_client()
+        r2_client.upload_fileobj(
+            Fileobj=io.BytesIO(file_bytes),
+            Bucket=settings.r2_bucket_name,
+            Key=object_key,
+            ExtraArgs={
+                "ContentType": "image/png",
+                "CacheControl": "public, max-age=31536000, immutable",
+                "Metadata": {
+                    "job-id": job_id,
+                    "source-filename": infer_source_filename(job_record.input_url, job_id),
+                    "refined": "true",
+                },
+            },
+        )
+        output_url = build_public_output_url(object_key)
+
+    # Update the job record
+    updated_record = update_job(
+        job_id=job_id,
+        status="COMPLETED",
+        output_url=output_url,
+    )
+
+    return JobStatusResponse(**asdict(updated_record))
+

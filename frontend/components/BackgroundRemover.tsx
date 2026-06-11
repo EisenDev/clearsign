@@ -3,6 +3,8 @@
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import MaskRefiner from './MaskRefiner';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -168,6 +170,14 @@ export default function BackgroundRemover({
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [totalJobs, setTotalJobs] = useState<number>(0);
+
+  // Refinement editor state
+  const [refineParams, setRefineParams] = useState<{
+    jobId: string;
+    originalUrl: string;
+    processedUrl: string;
+  } | null>(null);
+
 
   // Preview background toggle: transparent, white, black
   const [bgMode, setBgMode] = useState<'transparent' | 'white' | 'black'>('transparent');
@@ -474,7 +484,27 @@ export default function BackgroundRemover({
     }
   }, [apiBaseUrl, fetchHistory, currentPage, selectedMode, processItem]);
 
+  const handleSaveRefinement = useCallback((newOutputUrl: string) => {
+    if (!refineParams) return;
+    const { jobId } = refineParams;
+
+    // Update batch items
+    setItems((prev) =>
+      prev.map((item) =>
+        item.jobId === jobId ? { ...item, outputUrl: newOutputUrl } : item
+      )
+    );
+
+    // Update history
+    setHistory((prev) =>
+      prev.map((job) =>
+        job.job_id === jobId ? { ...job, output_url: newOutputUrl } : job
+      )
+    );
+  }, [refineParams]);
+
   const addFiles = useCallback(
+
     (files: File[]): void => {
       const validFiles = files.filter((f) => f.type.startsWith('image/'));
       if (validFiles.length === 0) return;
@@ -1033,17 +1063,37 @@ export default function BackgroundRemover({
                           </button>
                         )}
                         {item.status === 'COMPLETED' && (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); void handleDownload(item); }}
-                            className="h-7 w-7 rounded-[6px] text-[#737373] hover:text-[#111111] flex items-center justify-center transition-colors"
-                            title="Download PNG"
-                          >
-                            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                            </svg>
-                          </button>
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRefineParams({
+                                  jobId: item.jobId!,
+                                  originalUrl: item.localPreviewUrl,
+                                  processedUrl: item.outputUrl!,
+                                });
+                              }}
+                              className="h-7 w-7 rounded-[6px] text-[#737373] hover:text-[#111111] flex items-center justify-center transition-colors"
+                              title="Refine Mask"
+                            >
+                              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); void handleDownload(item); }}
+                              className="h-7 w-7 rounded-[6px] text-[#737373] hover:text-[#111111] flex items-center justify-center transition-colors"
+                              title="Download PNG"
+                            >
+                              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                              </svg>
+                            </button>
+                          </div>
                         )}
+
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
@@ -1111,14 +1161,30 @@ export default function BackgroundRemover({
                       </div>
 
                       {selectedItem.status === 'COMPLETED' && selectedItem.outputUrl && (
-                        <button
-                          type="button"
-                          onClick={() => void handleDownload(selectedItem)}
-                          className="inline-flex h-8 items-center justify-center rounded-[6px] bg-[#111111] px-4 text-[13px] font-medium text-white transition hover:bg-[#222222]"
-                        >
-                          Download
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRefineParams({
+                                jobId: selectedItem.jobId!,
+                                originalUrl: selectedItem.localPreviewUrl,
+                                processedUrl: selectedItem.outputUrl!,
+                              })
+                            }
+                            className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] bg-white px-3 text-[13px] font-medium text-[#111111] transition hover:bg-[#F5F5F5]"
+                          >
+                            Refine / Clean
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDownload(selectedItem)}
+                            className="inline-flex h-8 items-center justify-center rounded-[6px] bg-[#111111] px-4 text-[13px] font-medium text-white transition hover:bg-[#222222]"
+                          >
+                            Download
+                          </button>
+                        </div>
                       )}
+
                     </div>
                   </div>
 
@@ -1343,24 +1409,42 @@ export default function BackgroundRemover({
                       <div className="flex items-center justify-between gap-2 border-t border-[#EFEFEF] pt-3 mt-3">
                         <div className="flex items-center gap-1.5">
                           {job.output_url && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRefineParams({
+                                    jobId: job.job_id,
+                                    originalUrl: job.input_url,
+                                    processedUrl: job.output_url!,
+                                  })
+                                }
+                                className="inline-flex h-8 items-center justify-center rounded-[6px] bg-[#111111] px-2.5 text-[12px] font-medium text-white transition hover:bg-[#222222]"
+                              >
+                                Refine
+                              </button>
+                              <a
+                                href={job.output_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] px-2.5 text-[12px] font-medium text-[#111111] transition hover:bg-[#F5F5F5]"
+                              >
+                                Open PNG
+                              </a>
+                            </>
+                          )}
+                          {!job.output_url && (
                             <a
-                              href={job.output_url}
+                              href={job.input_url}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex h-8 items-center justify-center rounded-[6px] bg-[#111111] px-2.5 text-[12px] font-medium text-white transition hover:bg-[#222222]"
+                              className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] px-2.5 text-[12px] font-medium text-[#111111] transition hover:bg-[#F5F5F5]"
                             >
-                              Open PNG
+                              Source
                             </a>
                           )}
-                          <a
-                            href={job.input_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] px-2.5 text-[12px] font-medium text-[#111111] transition hover:bg-[#F5F5F5]"
-                          >
-                            Source
-                          </a>
                         </div>
+
                         
                         <div className="flex items-center gap-1">
                           <button
@@ -1430,6 +1514,19 @@ export default function BackgroundRemover({
           )}
         </section>
       </div>
+
+      {refineParams && (
+        <MaskRefiner
+          isOpen={!!refineParams}
+          onClose={() => setRefineParams(null)}
+          originalImageUrl={refineParams.originalUrl}
+          processedImageUrl={refineParams.processedUrl}
+          jobId={refineParams.jobId}
+          apiBaseUrl={apiBaseUrl}
+          onSave={handleSaveRefinement}
+        />
+      )}
     </section>
   );
 }
+
