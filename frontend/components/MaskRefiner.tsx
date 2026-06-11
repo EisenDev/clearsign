@@ -648,170 +648,201 @@ export default function MaskRefiner({
         </div>
 
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-4 bg-[#212121] border-b border-[#262626] px-6 py-3 text-[13px] text-white">
-          <div className="flex items-center gap-3">
-            {/* Tool Toggles */}
-            <div className="flex p-0.5 rounded-[8px] bg-[#171717] border border-[#262626]">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#212121] border-b border-[#262626] px-4 py-2 text-[13px] text-white">
+          {/* Left group: Tools + Size/Tolerance */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Edit Mode Tool Buttons */}
+            <div className="flex p-0.5 rounded-[8px] bg-[#171717] border border-[#262626] shrink-0">
+              {/* Erase */}
               <button
                 type="button"
                 onClick={() => setBrushMode('erase')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] font-medium transition ${
+                title="Erase (Remove) — E"
+                className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
                   brushMode === 'erase'
                     ? 'bg-[#EF4444] text-white shadow-sm'
                     : 'text-[#A3A3A3] hover:text-white hover:bg-[#262626]'
                 }`}
               >
-                <div className="h-2 w-2 rounded-full bg-white opacity-90" />
-                Erase (Remove)
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
               </button>
+              {/* Restore */}
               <button
                 type="button"
                 onClick={() => setBrushMode('restore')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] font-medium transition ${
+                title="Restore (Reveal) — R"
+                className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
                   brushMode === 'restore'
                     ? 'bg-[#22C55E] text-white shadow-sm'
                     : 'text-[#A3A3A3] hover:text-white hover:bg-[#262626]'
                 }`}
               >
-                <div className="h-2 w-2 rounded-full bg-white opacity-90" />
-                Restore (Reveal)
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
               </button>
+              {/* Magic Wand */}
               <button
                 type="button"
                 onClick={() => setBrushMode('wand')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] font-medium transition ${
+                title="Magic Wand — W"
+                className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
                   brushMode === 'wand'
                     ? 'bg-purple-600 text-white shadow-sm'
                     : 'text-[#A3A3A3] hover:text-white hover:bg-[#262626]'
                 }`}
-                title="AI Magic Wand Tool"
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
                 </svg>
-                Magic Wand
               </button>
+              {/* Pan */}
               <button
                 type="button"
                 onClick={() => setBrushMode('pan')}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] font-medium transition ${
+                title="Pan / Drag — Space"
+                className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
                   brushMode === 'pan'
                     ? 'bg-[#3B82F6] text-white shadow-sm'
                     : 'text-[#A3A3A3] hover:text-white hover:bg-[#262626]'
                 }`}
-                title="Drag (Pan) Tool"
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4m0 6l-4 4-4-4M5 12h14M12 5v14" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0V11" />
                 </svg>
-                Drag (Pan)
               </button>
             </div>
 
+            {/* Tool mode label */}
+            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${
+              brushMode === 'erase' ? 'bg-[#EF4444]/20 text-[#EF4444]' :
+              brushMode === 'restore' ? 'bg-[#22C55E]/20 text-[#22C55E]' :
+              brushMode === 'wand' ? 'bg-purple-500/20 text-purple-400' :
+              'bg-[#3B82F6]/20 text-[#3B82F6]'
+            }`}>
+              {brushMode === 'erase' ? 'Erase' : brushMode === 'restore' ? 'Restore' : brushMode === 'wand' ? 'Wand' : 'Pan'}
+            </span>
+
+            {/* Separator */}
+            <div className="w-px h-6 bg-[#262626] shrink-0" />
+
             {/* Brush Size / Wand Controls */}
             {brushMode === 'wand' ? (
-              <div className="flex items-center gap-4 border-l border-[#262626] pl-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-[#A3A3A3] font-medium">Action:</span>
-                  <div className="flex p-0.5 rounded-[6px] bg-[#171717] border border-[#262626] text-[11px]">
-                    <button
-                      type="button"
-                      onClick={() => setWandAction('erase')}
-                      className={`px-2 py-1 rounded-[4px] font-semibold transition ${
-                        wandAction === 'erase' ? 'bg-[#EF4444] text-white shadow-sm' : 'text-[#A3A3A3] hover:text-white'
-                      }`}
-                    >
-                      Erase
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setWandAction('restore')}
-                      className={`px-2 py-1 rounded-[4px] font-semibold transition ${
-                        wandAction === 'restore' ? 'bg-[#22C55E] text-white shadow-sm' : 'text-[#A3A3A3] hover:text-white'
-                      }`}
-                    >
-                      Restore
-                    </button>
-                  </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex p-0.5 rounded-[6px] bg-[#171717] border border-[#262626] text-[11px] shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setWandAction('erase')}
+                    className={`px-2 py-1 rounded-[4px] font-semibold transition ${
+                      wandAction === 'erase' ? 'bg-[#EF4444] text-white shadow-sm' : 'text-[#A3A3A3] hover:text-white'
+                    }`}
+                  >
+                    Erase
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWandAction('restore')}
+                    className={`px-2 py-1 rounded-[4px] font-semibold transition ${
+                      wandAction === 'restore' ? 'bg-[#22C55E] text-white shadow-sm' : 'text-[#A3A3A3] hover:text-white'
+                    }`}
+                  >
+                    Restore
+                  </button>
                 </div>
-                <div className="flex items-center gap-2 border-l border-[#262626] pl-4">
-                  <span className="text-[#A3A3A3] font-medium">Tolerance:</span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[#A3A3A3] text-[11px] font-medium">Tol:</span>
                   <input
                     type="range"
                     min="0"
                     max="100"
                     value={wandTolerance}
                     onChange={(e) => setWandTolerance(parseInt(e.target.value))}
-                    className="w-24 h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
+                    className="w-20 h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
                   />
-                  <span className="font-semibold tabular-nums w-8 text-center">{wandTolerance}</span>
+                  <span className="font-bold tabular-nums text-[11px] text-white w-7 text-right">{wandTolerance}</span>
                 </div>
               </div>
             ) : brushMode !== 'pan' ? (
-              <div className="flex items-center gap-2 border-l border-[#262626] pl-4">
-                <span className="text-[#A3A3A3] font-medium">Brush Size:</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <svg className="h-3.5 w-3.5 text-[#A3A3A3]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="4" />
+                </svg>
                 <input
                   type="range"
                   min="1"
                   max="80"
                   value={brushSize}
                   onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                  className="w-24 h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
+                  className="w-20 h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
                 />
-                <span className="font-semibold tabular-nums w-8 text-center">{brushSize}px</span>
+                <span className="font-bold tabular-nums text-[11px] text-white w-8 text-right">{brushSize}px</span>
               </div>
-            ) : null}
+            ) : (
+              <span className="text-[11px] text-[#737373]">Hold Space + drag to pan freely</span>
+            )}
+
+            {/* Separator */}
+            <div className="w-px h-6 bg-[#262626] shrink-0" />
 
             {/* Zoom Controls */}
-            <div className="flex items-center gap-1.5 border-l border-[#262626] pl-4">
-              <span className="text-[#A3A3A3] font-medium mr-1">Zoom:</span>
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
-                onClick={() => setScale((prev) => Math.max(0.4, prev / 1.1))}
-                className="h-7 w-7 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center text-white text-[14px] font-bold"
-                title="Zoom Out"
+                onClick={() => setScale((prev) => Math.max(0.4, prev / 1.15))}
+                className="h-7 w-7 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center text-white font-bold"
+                title="Zoom Out (scroll down)"
               >
-                -
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM13.5 10.5h-6" />
+                </svg>
               </button>
-              <span className="font-semibold tabular-nums w-12 text-center">{Math.round(scale * 100)}%</span>
+              <span className="font-semibold tabular-nums text-[11px] w-10 text-center">{Math.round(scale * 100)}%</span>
               <button
                 type="button"
-                onClick={() => setScale((prev) => Math.min(6, prev * 1.1))}
-                className="h-7 w-7 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center text-white text-[14px] font-bold"
-                title="Zoom In"
+                onClick={() => setScale((prev) => Math.min(6, prev * 1.15))}
+                className="h-7 w-7 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center text-white font-bold"
+                title="Zoom In (scroll up)"
               >
-                +
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
+                </svg>
               </button>
               <button
                 type="button"
                 onClick={() => setScale(1)}
-                className="h-7 px-1.5 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition text-[11px] text-[#A3A3A3] hover:text-white"
-                title="Reset Zoom"
+                className="h-7 px-2 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition text-[10px] text-[#A3A3A3] hover:text-white font-medium"
+                title="Reset Zoom to 100%"
               >
-                Reset
+                1:1
               </button>
             </div>
           </div>
 
-          {/* Undo, Redo, Reset */}
-          <div className="flex items-center gap-2">
+          {/* Right group: Undo / Redo / Reset */}
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               onClick={handleUndo}
               disabled={undoStack.length <= 1 || isSaving}
-              className="h-8 px-3 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition disabled:opacity-30 disabled:hover:bg-[#171717]"
               title="Undo"
+              className="h-8 w-8 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center disabled:opacity-30 disabled:hover:bg-[#171717]"
             >
-              Undo
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+              </svg>
             </button>
             <button
               type="button"
               onClick={handleRedo}
               disabled={redoStack.length === 0 || isSaving}
-              className="h-8 px-3 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition disabled:opacity-30 disabled:hover:bg-[#171717]"
               title="Redo"
+              className="h-8 w-8 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center disabled:opacity-30 disabled:hover:bg-[#171717]"
             >
-              Redo
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3" />
+              </svg>
             </button>
             <button
               type="button"
