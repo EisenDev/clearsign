@@ -1571,10 +1571,10 @@ export default function BackgroundRemover({
                   </div>
 
                   {/* Workspace body */}
-                  <div className={selectedItem.status === 'COMPLETED' ? "grid grid-cols-1 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"}>
+                  <div className="flex flex-col gap-4">
                     
-                    {/* Left column: Preview workspace */}
-                    <div className={selectedItem.status === 'COMPLETED' ? "lg:col-span-2 flex flex-col gap-4" : "flex flex-col gap-4"}>
+                    {/* Preview workspace - full width */}
+                    <div className="flex flex-col gap-4">
                       {/* PENDING */}
                       {selectedItem.status === 'PENDING' && (
                         <div className="relative w-full h-[380px] bg-[#FAFAFA] rounded-[8px] overflow-hidden border border-[#D4D4D4] flex items-center justify-center">
@@ -1763,525 +1763,313 @@ export default function BackgroundRemover({
                       )}
                     </div>
 
-                    {/* Right column: Design Studio Controls */}
+                    {/* Design Studio — horizontal tab panel below the preview */}
                     {selectedItem.status === 'COMPLETED' && (
-                      <div className="bg-[#FAFAFA] border border-[#E5E5E5] rounded-[12px] p-4 flex flex-col gap-3.5 shadow-sm text-neutral-800 lg:col-span-1 h-fit">
-                        <div>
-                          <h4 className="text-[13px] font-bold text-[#111111] uppercase tracking-wider">Design Studio</h4>
-                          <p className="text-[11px] text-[#737373] mt-0.5">Apply custom backdrops, shadows, and spacing.</p>
+                      <div className="bg-white border border-[#E5E5E5] rounded-[12px] shadow-sm text-neutral-800 overflow-hidden">
+                        {/* Tab Bar */}
+                        <div className="flex items-center border-b border-[#E5E5E5] bg-[#FAFAFA]">
+                          <div className="flex">
+                            {(['backdrop', 'shadows', 'layout'] as const).map((tab) => (
+                              <button
+                                key={tab}
+                                type="button"
+                                onClick={() => setActiveAccordion(tab)}
+                                className={`px-5 py-2.5 text-[12px] font-semibold transition border-b-2 ${
+                                  activeAccordion === tab
+                                    ? 'border-blue-600 text-blue-600 bg-white'
+                                    : 'border-transparent text-[#737373] hover:text-[#111111] hover:bg-white/60'
+                                }`}
+                              >
+                                {tab === 'backdrop' ? '🎨 Backdrop' : tab === 'shadows' ? '🌑 Shadows' : '📐 Layout'}
+                              </button>
+                            ))}
+                          </div>
+                          {/* Current state summary */}
+                          <div className="ml-auto px-4 flex items-center gap-2 text-[11px] text-[#A3A3A3]">
+                            {bgType !== 'transparent' && (
+                              <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium capitalize">{bgType}</span>
+                            )}
+                            {shadowType !== 'none' && (
+                              <span className="bg-neutral-100 text-neutral-600 px-2 py-0.5 rounded-full font-medium capitalize">{shadowType} shadow</span>
+                            )}
+                            {harmonizeAmount > 0 && (
+                              <span className="bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full font-medium">Harmonize {harmonizeAmount}%</span>
+                            )}
+                          </div>
                         </div>
 
-                        <div className="flex flex-col gap-2">
-                          {/* Accordion 1: Backdrop & Color */}
-                          <div className="border border-[#E5E5E5] rounded-[8px] bg-white overflow-hidden shadow-sm">
-                            <button
-                              type="button"
-                              onClick={() => setActiveAccordion(activeAccordion === 'backdrop' ? 'backdrop' : 'backdrop')}
-                              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-[#F9FAFB] transition text-left cursor-pointer border-b border-[#E5E5E5]/60"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="text-[12px] font-bold text-[#111111]">1. Backdrop Settings</span>
-                                <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-medium capitalize">
-                                  {bgType === 'transparent' ? 'Clear' : bgType}
-                                </span>
-                              </div>
-                              <svg
-                                className={`h-4 w-4 text-[#737373] transition-transform duration-200 ${
-                                  activeAccordion === 'backdrop' ? 'rotate-180' : ''
-                                }`}
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2.5"
-                                viewBox="0 0 24 24"
-                              >
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                              </svg>
-                            </button>
+                        {/* Tab Content */}
+                        <div className="p-4">
 
-                            {activeAccordion === 'backdrop' && (
-                              <div className="p-4 flex flex-col gap-4 bg-white transition-all">
-                                {/* Background Layer Select */}
-                                <div className="flex flex-col gap-2">
-                                  <label className="text-[11px] font-semibold text-[#737373] uppercase tracking-wider">Background Type</label>
-                                  <div className="grid grid-cols-4 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
-                                    {(['transparent', 'color', 'gradient', 'image'] as const).map((type) => (
-                                      <button
-                                        key={type}
-                                        type="button"
-                                        onClick={() => setBgType(type)}
-                                        className={`py-1 rounded-[6px] font-medium transition ${
-                                          bgType === type ? 'bg-white text-[#111111] shadow-sm font-semibold' : 'text-[#737373] hover:text-[#111111]'
-                                        }`}
-                                      >
-                                        {type === 'transparent' ? 'Clear' : 
-                                         type === 'color' ? 'Solid' : 
-                                         type === 'gradient' ? 'Grad' : 'Image'}
-                                      </button>
-                                    ))}
-                                  </div>
+                          {/* ── Backdrop Tab ── */}
+                          {activeAccordion === 'backdrop' && (
+                            <div className="flex flex-wrap gap-x-6 gap-y-4 items-start">
+                              {/* Column 1: BG Type + Color/Gradient/Image */}
+                              <div className="flex flex-col gap-2 min-w-[200px]">
+                                <label className="text-[11px] font-bold text-[#737373] uppercase tracking-wider">Background</label>
+                                <div className="flex p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
+                                  {(['transparent', 'color', 'gradient', 'image'] as const).map((type) => (
+                                    <button
+                                      key={type}
+                                      type="button"
+                                      onClick={() => setBgType(type)}
+                                      className={`flex-1 py-1.5 rounded-[6px] font-medium transition ${
+                                        bgType === type ? 'bg-white text-[#111111] shadow-sm font-semibold' : 'text-[#737373] hover:text-[#111111]'
+                                      }`}
+                                    >
+                                      {type === 'transparent' ? 'Clear' : type === 'color' ? 'Solid' : type === 'gradient' ? 'Gradient' : 'Image'}
+                                    </button>
+                                  ))}
                                 </div>
 
-                                {/* Solid Color Configuration */}
+                                {/* Solid color */}
                                 {bgType === 'color' && (
-                                  <div className="flex flex-col gap-2.5 bg-[#F9FAFB] border border-[#E5E5E5] rounded-[8px] p-3 shadow-inner">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      {['#FFFFFF', '#111111', '#F3F4F6', '#E8ECE9', '#E0F2FE', '#FAF0E6'].map((color) => (
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    {['#FFFFFF', '#111111', '#F3F4F6', '#E8ECE9', '#E0F2FE', '#FAF0E6'].map((color) => (
+                                      <button
+                                        key={color}
+                                        type="button"
+                                        onClick={() => setBgColor(color)}
+                                        className={`h-6 w-6 rounded-full border border-black/10 transition-transform ${bgColor === color ? 'scale-110 ring-2 ring-blue-500' : 'hover:scale-105'}`}
+                                        style={{ backgroundColor: color }}
+                                        title={color}
+                                      />
+                                    ))}
+                                    <div className="flex items-center gap-1.5 ml-1">
+                                      <input
+                                        type="text"
+                                        value={bgColor}
+                                        onChange={(e) => setBgColor(e.target.value)}
+                                        className="w-20 px-2 py-1 border border-[#E5E5E5] rounded text-[11px] font-mono uppercase bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                      />
+                                      <div className="relative h-6 w-6 rounded border border-black/15 overflow-hidden shrink-0">
+                                        <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="absolute inset-[-4px] w-[32px] h-[32px] cursor-pointer" />
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Gradient */}
+                                {bgType === 'gradient' && (
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    {/* Presets */}
+                                    <div className="flex items-center gap-1.5">
+                                      {[
+                                        { start: '#FF6B6B', end: '#FF8E53', name: 'Sunset' },
+                                        { start: '#0575E6', end: '#00F260', name: 'Northern Lights' },
+                                        { start: '#DA4453', end: '#89216B', name: 'Royal Plum' },
+                                        { start: '#11998e', end: '#38ef7d', name: 'Emerald Sea' },
+                                        { start: '#F953C6', end: '#B91D73', name: 'Cyberpunk' }
+                                      ].map((p, idx) => (
                                         <button
-                                          key={color}
+                                          key={idx}
                                           type="button"
-                                          onClick={() => setBgColor(color)}
-                                          className={`h-6 w-6 rounded-full border border-black/10 transition-transform ${
-                                            bgColor === color ? 'scale-110 ring-2 ring-blue-500 shadow-md' : 'hover:scale-105'
-                                          }`}
-                                          style={{ backgroundColor: color }}
-                                          title={color}
+                                          onClick={() => applyPresetGradient(p.start, p.end)}
+                                          className={`h-6 w-6 rounded-full border border-black/10 transition-transform ${gradientStartColor === p.start && gradientEndColor === p.end ? 'scale-110 ring-2 ring-blue-500' : 'hover:scale-105'}`}
+                                          style={{ backgroundImage: `linear-gradient(135deg, ${p.start} 0%, ${p.end} 100%)` }}
+                                          title={p.name}
                                         />
                                       ))}
                                     </div>
-                                    <div className="flex items-center justify-between border-t border-[#E5E5E5] pt-2 mt-1">
-                                      <span className="text-[11px] text-[#737373] font-medium">Custom Color (Hex):</span>
-                                      <div className="flex items-center gap-2">
-                                        <input
-                                          type="text"
-                                          value={bgColor}
-                                          onChange={(e) => setBgColor(e.target.value)}
-                                          className="w-20 px-2 py-1 border border-[#E5E5E5] rounded text-[11px] font-mono uppercase bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                        />
-                                        <div className="relative h-6 w-6 rounded border border-black/15 overflow-hidden shadow-sm shrink-0">
-                                          <input
-                                            type="color"
-                                            value={bgColor}
-                                            onChange={(e) => setBgColor(e.target.value)}
-                                            className="absolute inset-[-4px] w-[32px] h-[32px] cursor-pointer"
-                                          />
-                                        </div>
+                                    <div className="flex items-center gap-2 text-[11px]">
+                                      <span className="text-[#737373]">From:</span>
+                                      <div className="relative h-5 w-5 rounded border border-black/15 overflow-hidden shrink-0">
+                                        <input type="color" value={gradientStartColor} onChange={(e) => setGradientStartColor(e.target.value)} className="absolute inset-[-4px] w-[28px] h-[28px] cursor-pointer" />
                                       </div>
+                                      <span className="text-[#737373]">To:</span>
+                                      <div className="relative h-5 w-5 rounded border border-black/15 overflow-hidden shrink-0">
+                                        <input type="color" value={gradientEndColor} onChange={(e) => setGradientEndColor(e.target.value)} className="absolute inset-[-4px] w-[28px] h-[28px] cursor-pointer" />
+                                      </div>
+                                      <span className="text-[#737373] ml-1">{gradientAngle}°</span>
+                                      <input
+                                        type="range"
+                                        min="0"
+                                        max="360"
+                                        value={gradientAngle}
+                                        onChange={(e) => setGradientAngle(Number(e.target.value))}
+                                        className="w-20 h-1 accent-blue-600 cursor-pointer"
+                                      />
                                     </div>
                                   </div>
                                 )}
 
-                                {/* Gradient Configuration */}
-                                {bgType === 'gradient' && (
-                                  <div className="flex flex-col gap-3.5 bg-[#F9FAFB] border border-[#E5E5E5] rounded-[8px] p-3 shadow-inner text-[11px]">
-                                    {/* Presets */}
-                                    <div className="flex flex-col gap-1.5">
-                                      <span className="text-[#737373] font-medium">Quick Presets:</span>
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        {[
-                                          { start: '#FF6B6B', end: '#FF8E53', name: 'Sunset' },
-                                          { start: '#0575E6', end: '#00F260', name: 'Northern Lights' },
-                                          { start: '#DA4453', end: '#89216B', name: 'Royal Plum' },
-                                          { start: '#11998e', end: '#38ef7d', name: 'Emerald Sea' },
-                                          { start: '#F953C6', end: '#B91D73', name: 'Cyberpunk' }
-                                        ].map((p, idx) => (
-                                          <button
-                                            key={idx}
-                                            type="button"
-                                            onClick={() => applyPresetGradient(p.start, p.end)}
-                                            className={`h-6 w-6 rounded-full border border-black/10 transition-transform ${
-                                              gradientStartColor === p.start && gradientEndColor === p.end ? 'scale-110 ring-2 ring-blue-500 shadow-md' : 'hover:scale-105'
-                                            }`}
-                                            style={{ backgroundImage: `linear-gradient(135deg, ${p.start} 0%, ${p.end} 100%)` }}
-                                            title={p.name}
-                                          />
-                                        ))}
-                                      </div>
-                                    </div>
-
-                                    {/* Custom gradient controls */}
-                                    <div className="border-t border-[#E5E5E5] pt-3 flex flex-col gap-2.5">
-                                      {/* Start Color */}
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-[#737373] font-medium">Start Color:</span>
-                                        <div className="flex items-center gap-2">
-                                          <input
-                                            type="text"
-                                            value={gradientStartColor}
-                                            onChange={(e) => setGradientStartColor(e.target.value)}
-                                            className="w-18 px-1.5 py-0.5 border border-[#E5E5E5] rounded text-[10px] font-mono uppercase bg-white focus:outline-none"
-                                          />
-                                          <div className="relative h-5 w-5 rounded border border-black/15 overflow-hidden shadow-sm shrink-0">
-                                            <input
-                                              type="color"
-                                              value={gradientStartColor}
-                                              onChange={(e) => setGradientStartColor(e.target.value)}
-                                              className="absolute inset-[-4px] w-[28px] h-[28px] cursor-pointer"
-                                            />
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      {/* End Color */}
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-[#737373] font-medium">End Color:</span>
-                                        <div className="flex items-center gap-2">
-                                          <input
-                                            type="text"
-                                            value={gradientEndColor}
-                                            onChange={(e) => setGradientEndColor(e.target.value)}
-                                            className="w-18 px-1.5 py-0.5 border border-[#E5E5E5] rounded text-[10px] font-mono uppercase bg-white focus:outline-none"
-                                          />
-                                          <div className="relative h-5 w-5 rounded border border-black/15 overflow-hidden shadow-sm shrink-0">
-                                            <input
-                                              type="color"
-                                              value={gradientEndColor}
-                                              onChange={(e) => setGradientEndColor(e.target.value)}
-                                              className="absolute inset-[-4px] w-[28px] h-[28px] cursor-pointer"
-                                            />
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      {/* Angle Slider */}
-                                      <div className="flex flex-col gap-1 mt-1">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[#737373] font-medium">Angle:</span>
-                                          <span className="font-semibold text-blue-600 font-mono">{gradientAngle}°</span>
-                                        </div>
-                                        <input
-                                          type="range"
-                                          min="0"
-                                          max="360"
-                                          value={gradientAngle}
-                                          onChange={(e) => setGradientAngle(Number(e.target.value))}
-                                          className="w-full h-1 accent-blue-600 cursor-pointer"
-                                        />
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Custom Image background */}
+                                {/* Image */}
                                 {bgType === 'image' && (
-                                  <div className="bg-[#F9FAFB] border border-[#E5E5E5] rounded-[8px] p-3 shadow-inner">
+                                  <div>
                                     {bgImage ? (
-                                      <div className="flex items-center justify-between gap-2 text-[11px]">
-                                        <div 
-                                          className="h-9 w-9 rounded-[4px] border border-[#E5E5E5] bg-cover bg-center shrink-0 shadow-sm"
-                                          style={{ backgroundImage: `url(${bgImage})` }}
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() => setBgImage(null)}
-                                          className="font-semibold text-[#DC2626] hover:underline"
-                                        >
-                                          Remove Image
-                                        </button>
+                                      <div className="flex items-center gap-2 text-[11px]">
+                                        <div className="h-8 w-8 rounded border border-[#E5E5E5] bg-cover bg-center shrink-0" style={{ backgroundImage: `url(${bgImage})` }} />
+                                        <button type="button" onClick={() => setBgImage(null)} className="font-semibold text-[#DC2626] hover:underline">Remove</button>
                                       </div>
                                     ) : (
-                                      <label className="flex flex-col items-center justify-center py-3 border border-dashed border-[#D4D4D4] hover:border-blue-500 hover:bg-blue-50/20 rounded-[6px] cursor-pointer transition">
-                                        <svg className="h-5 w-5 text-[#A3A3A3] transition-colors" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M14 8h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                        </svg>
-                                        <span className="text-[10px] text-[#737373] mt-1 font-medium">Upload custom backdrop</span>
-                                        <input
-                                          type="file"
-                                          accept="image/*"
-                                          className="hidden"
-                                          onChange={(e) => {
-                                            const file = e.target.files?.[0];
-                                            if (file) setBgImage(URL.createObjectURL(file));
-                                          }}
-                                        />
+                                      <label className="inline-flex items-center gap-2 cursor-pointer border border-dashed border-[#D4D4D4] hover:border-blue-500 px-3 py-2 rounded-[6px] text-[11px] text-[#737373] hover:text-blue-600 transition">
+                                        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M14 8h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                        Upload backdrop
+                                        <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) setBgImage(URL.createObjectURL(f)); }} />
                                       </label>
                                     )}
                                   </div>
                                 )}
+                              </div>
 
-                                {/* Color Harmonization Slider */}
-                                <div className="flex flex-col gap-2 border-t border-[#E5E5E5]/60 pt-3">
-                                  <div className="flex items-center justify-between text-[11px]">
-                                    <span className="font-semibold text-[#111111]">Color Harmonization Blend</span>
-                                    <span className="font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">{harmonizeAmount}%</span>
-                                  </div>
-                                  <p className="text-[10px] text-[#A3A3A3] leading-snug">Blend subject edges with the background color for a natural composited look.</p>
+                              {/* Column 2: Color Harmonization */}
+                              <div className="flex flex-col gap-2 min-w-[180px] flex-1">
+                                <label className="text-[11px] font-bold text-[#737373] uppercase tracking-wider">Color Harmonization</label>
+                                <p className="text-[10px] text-[#A3A3A3] leading-snug">Blends subject edges with the backdrop color.</p>
+                                <div className="flex items-center gap-3">
                                   <input
                                     type="range"
                                     min="0"
                                     max="100"
                                     value={harmonizeAmount}
                                     onChange={(e) => setHarmonizeAmount(Number(e.target.value))}
-                                    className="w-full h-1.5 accent-blue-600 cursor-pointer"
+                                    className="flex-1 h-1.5 accent-blue-600 cursor-pointer"
                                   />
+                                  <span className="text-[12px] font-bold text-blue-600 w-10 text-right">{harmonizeAmount}%</span>
                                 </div>
                               </div>
-                            )}
-                          </div>
+                            </div>
+                          )}
 
-                          {/* Accordion 2: 3D Shadows */}
-                          <div className="border border-[#E5E5E5] rounded-[8px] bg-white overflow-hidden shadow-sm">
-                            <button
-                              type="button"
-                              onClick={() => setActiveAccordion(activeAccordion === 'shadows' ? 'backdrop' : 'shadows')}
-                              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-[#F9FAFB] transition text-left cursor-pointer border-b border-[#E5E5E5]/60"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="text-[12px] font-bold text-[#111111]">2. 3D Shadow Generator</span>
-                                <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-medium capitalize">
-                                  {shadowType === 'none' ? 'None' : shadowType}
-                                </span>
-                              </div>
-                              <svg
-                                className={`h-4 w-4 text-[#737373] transition-transform duration-200 ${
-                                  activeAccordion === 'shadows' ? 'rotate-180' : ''
-                                }`}
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2.5"
-                                viewBox="0 0 24 24"
-                              >
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                              </svg>
-                            </button>
-
-                            {activeAccordion === 'shadows' && (
-                              <div className="p-4 flex flex-col gap-4 bg-white transition-all">
-                                <div className="flex flex-col gap-2">
-                                  <label className="text-[11px] font-semibold text-[#737373] uppercase tracking-wider">Shadow Style</label>
-                                  <div className="grid grid-cols-3 gap-1.5 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
-                                    {(['none', 'drop', 'contact'] as const).map((type) => (
-                                      <button
-                                        key={type}
-                                        type="button"
-                                        onClick={() => setShadowType(type)}
-                                        className={`py-1 rounded-[6px] font-medium transition text-center ${
-                                          shadowType === type
-                                            ? 'bg-white text-[#111111] shadow-sm font-semibold'
-                                            : 'text-[#737373] hover:text-[#111111]'
-                                        }`}
-                                      >
-                                        {type === 'none' ? 'None' :
-                                         type === 'drop' ? 'Drop' : 'Contact'}
-                                      </button>
-                                    ))}
-                                  </div>
+                          {/* ── Shadows Tab ── */}
+                          {activeAccordion === 'shadows' && (
+                            <div className="flex flex-wrap gap-x-6 gap-y-4 items-start">
+                              {/* Shadow Type */}
+                              <div className="flex flex-col gap-2">
+                                <label className="text-[11px] font-bold text-[#737373] uppercase tracking-wider">Shadow Style</label>
+                                <div className="flex p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
+                                  {(['none', 'drop', 'contact'] as const).map((type) => (
+                                    <button
+                                      key={type}
+                                      type="button"
+                                      onClick={() => setShadowType(type)}
+                                      className={`px-4 py-1.5 rounded-[6px] font-medium transition ${
+                                        shadowType === type ? 'bg-white text-[#111111] shadow-sm font-semibold' : 'text-[#737373] hover:text-[#111111]'
+                                      }`}
+                                    >
+                                      {type === 'none' ? 'None' : type === 'drop' ? 'Drop Shadow' : 'Contact Shadow'}
+                                    </button>
+                                  ))}
                                 </div>
+                              </div>
 
-                                {/* Drop Shadow Controls */}
-                                {shadowType === 'drop' && (
-                                  <div className="flex flex-col gap-3 bg-[#F9FAFB] border border-[#E5E5E5] rounded-[8px] p-3 shadow-inner text-[11px]">
-                                    {/* Angle & Distance */}
-                                    <div className="grid grid-cols-2 gap-3">
-                                      <div className="flex flex-col gap-1">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[#737373] font-medium">Angle:</span>
-                                          <span className="font-semibold text-blue-600 font-mono">{shadowAngle}°</span>
-                                        </div>
-                                        <input
-                                          type="range"
-                                          min="0"
-                                          max="360"
-                                          value={shadowAngle}
-                                          onChange={(e) => setShadowAngle(Number(e.target.value))}
-                                          className="w-full h-1 accent-blue-600 cursor-pointer"
-                                        />
-                                      </div>
-                                      <div className="flex flex-col gap-1">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[#737373] font-medium">Distance:</span>
-                                          <span className="font-semibold text-blue-600 font-mono">{shadowDistance}px</span>
-                                        </div>
-                                        <input
-                                          type="range"
-                                          min="0"
-                                          max="50"
-                                          value={shadowDistance}
-                                          onChange={(e) => setShadowDistance(Number(e.target.value))}
-                                          className="w-full h-1 accent-blue-600 cursor-pointer"
-                                        />
-                                      </div>
-                                    </div>
-                                    {/* Blur & Opacity */}
-                                    <div className="grid grid-cols-2 gap-3">
-                                      <div className="flex flex-col gap-1">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[#737373] font-medium">Blur:</span>
-                                          <span className="font-semibold text-blue-600 font-mono">{shadowBlur}px</span>
-                                        </div>
-                                        <input
-                                          type="range"
-                                          min="0"
-                                          max="80"
-                                          value={shadowBlur}
-                                          onChange={(e) => setShadowBlur(Number(e.target.value))}
-                                          className="w-full h-1 accent-blue-600 cursor-pointer"
-                                        />
-                                      </div>
-                                      <div className="flex flex-col gap-1">
-                                        <div className="flex items-center justify-between">
-                                          <span className="text-[#737373] font-medium">Opacity:</span>
-                                          <span className="font-semibold text-blue-600 font-mono">{shadowOpacity}%</span>
-                                        </div>
-                                        <input
-                                          type="range"
-                                          min="0"
-                                          max="100"
-                                          value={shadowOpacity}
-                                          onChange={(e) => setShadowOpacity(Number(e.target.value))}
-                                          className="w-full h-1 accent-blue-600 cursor-pointer"
-                                        />
-                                      </div>
-                                    </div>
-                                    {/* Shadow Color */}
-                                    <div className="flex items-center justify-between border-t border-[#E5E5E5] pt-2.5 mt-1">
-                                      <span className="text-[#737373] font-medium">Shadow Color:</span>
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="text-[10px] font-mono text-[#A3A3A3] uppercase">{shadowColor}</span>
-                                        <input
-                                          type="color"
-                                          value={shadowColor}
-                                          onChange={(e) => setShadowColor(e.target.value)}
-                                          className="h-5.5 w-5.5 rounded cursor-pointer border border-[#E5E5E5] p-0"
-                                        />
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Contact Shadow Controls */}
-                                {shadowType === 'contact' && (
-                                  <div className="flex flex-col gap-3 bg-[#F9FAFB] border border-[#E5E5E5] rounded-[8px] p-3 shadow-inner text-[11px]">
-                                    <div className="flex flex-col gap-1">
+                              {/* Drop shadow controls inline */}
+                              {shadowType === 'drop' && (
+                                <div className="flex flex-wrap gap-4 items-end text-[11px]">
+                                  {[
+                                    { label: 'Angle', val: shadowAngle, set: setShadowAngle, min: 0, max: 360, unit: '°' },
+                                    { label: 'Distance', val: shadowDistance, set: setShadowDistance, min: 0, max: 50, unit: 'px' },
+                                    { label: 'Blur', val: shadowBlur, set: setShadowBlur, min: 0, max: 80, unit: 'px' },
+                                    { label: 'Opacity', val: shadowOpacity, set: setShadowOpacity, min: 0, max: 100, unit: '%' },
+                                  ].map((ctrl) => (
+                                    <div key={ctrl.label} className="flex flex-col gap-1 min-w-[100px]">
                                       <div className="flex items-center justify-between">
-                                        <span className="text-[#737373] font-medium">Blur:</span>
-                                        <span className="font-semibold text-blue-600 font-mono">{contactShadowBlur}px</span>
+                                        <span className="text-[#737373] font-medium">{ctrl.label}</span>
+                                        <span className="font-bold text-blue-600 font-mono">{ctrl.val}{ctrl.unit}</span>
                                       </div>
-                                      <input
-                                        type="range"
-                                        min="0"
-                                        max="80"
-                                        value={contactShadowBlur}
-                                        onChange={(e) => setContactShadowBlur(Number(e.target.value))}
+                                      <input type="range" min={ctrl.min} max={ctrl.max} value={ctrl.val}
+                                        onChange={(e) => ctrl.set(Number(e.target.value))}
                                         className="w-full h-1 accent-blue-600 cursor-pointer"
                                       />
                                     </div>
-                                    <div className="flex flex-col gap-1">
+                                  ))}
+                                  <div className="flex flex-col gap-1">
+                                    <span className="text-[#737373] font-medium">Color</span>
+                                    <input type="color" value={shadowColor} onChange={(e) => setShadowColor(e.target.value)}
+                                      className="h-7 w-10 rounded cursor-pointer border border-[#E5E5E5] p-0.5" />
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Contact shadow controls inline */}
+                              {shadowType === 'contact' && (
+                                <div className="flex flex-wrap gap-4 items-end text-[11px]">
+                                  {[
+                                    { label: 'Blur', val: contactShadowBlur, set: setContactShadowBlur, min: 0, max: 80, unit: 'px' },
+                                    { label: 'Opacity', val: contactShadowOpacity, set: setContactShadowOpacity, min: 0, max: 100, unit: '%' },
+                                    { label: 'Flatness', val: contactShadowScale, set: setContactShadowScale, min: 5, max: 30, unit: '%' },
+                                  ].map((ctrl) => (
+                                    <div key={ctrl.label} className="flex flex-col gap-1 min-w-[100px]">
                                       <div className="flex items-center justify-between">
-                                        <span className="text-[#737373] font-medium">Opacity:</span>
-                                        <span className="font-semibold text-blue-600 font-mono">{contactShadowOpacity}%</span>
+                                        <span className="text-[#737373] font-medium">{ctrl.label}</span>
+                                        <span className="font-bold text-blue-600 font-mono">{ctrl.val}{ctrl.unit}</span>
                                       </div>
-                                      <input
-                                        type="range"
-                                        min="0"
-                                        max="100"
-                                        value={contactShadowOpacity}
-                                        onChange={(e) => setContactShadowOpacity(Number(e.target.value))}
+                                      <input type="range" min={ctrl.min} max={ctrl.max} value={ctrl.val}
+                                        onChange={(e) => ctrl.set(Number(e.target.value))}
                                         className="w-full h-1 accent-blue-600 cursor-pointer"
                                       />
                                     </div>
-                                    <div className="flex flex-col gap-1">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-[#737373] font-medium">Flatness (Height Scale):</span>
-                                        <span className="font-semibold text-blue-600 font-mono">{contactShadowScale}%</span>
-                                      </div>
-                                      <input
-                                        type="range"
-                                        min="5"
-                                        max="30"
-                                        value={contactShadowScale}
-                                        onChange={(e) => setContactShadowScale(Number(e.target.value))}
-                                        className="w-full h-1 accent-blue-600 cursor-pointer"
-                                      />
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Accordion 3: Layout & Spacing */}
-                          <div className="border border-[#E5E5E5] rounded-[8px] bg-white overflow-hidden shadow-sm">
-                            <button
-                              type="button"
-                              onClick={() => setActiveAccordion(activeAccordion === 'layout' ? 'backdrop' : 'layout')}
-                              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-[#F9FAFB] transition text-left cursor-pointer border-b border-[#E5E5E5]/60"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="text-[12px] font-bold text-[#111111]">3. Layout & Margins</span>
-                                <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-medium capitalize">
-                                  {aspectRatio === 'original' ? 'Fit' : aspectRatio} · {alignSubject}
-                                </span>
-                              </div>
-                              <svg
-                                className={`h-4 w-4 text-[#737373] transition-transform duration-200 ${
-                                  activeAccordion === 'layout' ? 'rotate-180' : ''
-                                }`}
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2.5"
-                                viewBox="0 0 24 24"
-                              >
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                              </svg>
-                            </button>
-
-                            {activeAccordion === 'layout' && (
-                              <div className="p-4 flex flex-col gap-4 bg-white transition-all">
-                                {/* Aspect Ratio Preset */}
-                                <div className="flex flex-col gap-2">
-                                  <label className="text-[11px] font-semibold text-[#737373] uppercase tracking-wider">Aspect Ratio Preset</label>
-                                  <div className="grid grid-cols-6 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[10px]">
-                                    {(['original', '1:1', '4:5', '16:9', '9:16', '2:3'] as const).map((aspect) => (
-                                      <button
-                                        key={aspect}
-                                        type="button"
-                                        onClick={() => setAspectRatio(aspect)}
-                                        className={`py-1 rounded-[6px] font-medium transition ${
-                                          aspectRatio === aspect ? 'bg-white text-[#111111] shadow-sm font-semibold' : 'text-[#737373] hover:text-[#111111]'
-                                        }`}
-                                      >
-                                        {aspect === 'original' ? 'Fit' : aspect}
-                                      </button>
-                                    ))}
-                                  </div>
+                                  ))}
                                 </div>
+                              )}
+                            </div>
+                          )}
 
-                                {/* Subject Alignment */}
-                                <div className="flex flex-col gap-2">
-                                  <label className="text-[11px] font-semibold text-[#737373] uppercase tracking-wider">Subject Alignment</label>
-                                  <div className="grid grid-cols-2 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
-                                    {(['center', 'bottom'] as const).map((align) => (
-                                      <button
-                                        key={align}
-                                        type="button"
-                                        onClick={() => setAlignSubject(align)}
-                                        className={`py-1 rounded-[6px] font-medium transition capitalize ${
-                                          alignSubject === align ? 'bg-white text-[#111111] shadow-sm font-semibold' : 'text-[#737373] hover:text-[#111111]'
-                                        }`}
-                                      >
-                                        {align}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-
-                                {/* Auto Padding Spacing */}
-                                <div className="flex flex-col gap-2">
-                                  <div className="flex items-center justify-between text-[11px]">
-                                    <span className="font-semibold text-[#111111]">Auto Margin Padding</span>
-                                    <span className="font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">{padding}%</span>
-                                  </div>
-                                  <div className="grid grid-cols-4 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
-                                    {([0, 10, 20, 30] as const).map((pad) => (
-                                      <button
-                                        key={pad}
-                                        type="button"
-                                        onClick={() => setPadding(pad)}
-                                        className={`py-1 rounded-[6px] font-medium transition ${
-                                          padding === pad ? 'bg-white text-[#111111] shadow-sm font-semibold' : 'text-[#737373] hover:text-[#111111]'
-                                        }`}
-                                      >
-                                        {pad === 0 ? '0%' : `${pad}%`}
-                                      </button>
-                                    ))}
-                                  </div>
+                          {/* ── Layout Tab ── */}
+                          {activeAccordion === 'layout' && (
+                            <div className="flex flex-wrap gap-x-6 gap-y-4 items-start">
+                              {/* Aspect Ratio */}
+                              <div className="flex flex-col gap-2">
+                                <label className="text-[11px] font-bold text-[#737373] uppercase tracking-wider">Aspect Ratio</label>
+                                <div className="flex gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
+                                  {(['original', '1:1', '4:5', '16:9', '9:16', '2:3'] as const).map((aspect) => (
+                                    <button
+                                      key={aspect}
+                                      type="button"
+                                      onClick={() => setAspectRatio(aspect)}
+                                      className={`px-2 py-1.5 rounded-[6px] font-medium transition whitespace-nowrap ${
+                                        aspectRatio === aspect ? 'bg-white text-[#111111] shadow-sm font-semibold' : 'text-[#737373] hover:text-[#111111]'
+                                      }`}
+                                    >
+                                      {aspect === 'original' ? 'Original' : aspect}
+                                    </button>
+                                  ))}
                                 </div>
                               </div>
-                            )}
-                          </div>
+
+                              {/* Subject Alignment */}
+                              <div className="flex flex-col gap-2">
+                                <label className="text-[11px] font-bold text-[#737373] uppercase tracking-wider">Alignment</label>
+                                <div className="flex gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
+                                  {(['center', 'bottom'] as const).map((align) => (
+                                    <button
+                                      key={align}
+                                      type="button"
+                                      onClick={() => setAlignSubject(align)}
+                                      className={`px-4 py-1.5 rounded-[6px] font-medium transition capitalize ${
+                                        alignSubject === align ? 'bg-white text-[#111111] shadow-sm font-semibold' : 'text-[#737373] hover:text-[#111111]'
+                                      }`}
+                                    >
+                                      {align}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Padding */}
+                              <div className="flex flex-col gap-2">
+                                <label className="text-[11px] font-bold text-[#737373] uppercase tracking-wider">Padding</label>
+                                <div className="flex gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
+                                  {([0, 10, 20, 30] as const).map((pad) => (
+                                    <button
+                                      key={pad}
+                                      type="button"
+                                      onClick={() => setPadding(pad)}
+                                      className={`px-3 py-1.5 rounded-[6px] font-medium transition ${
+                                        padding === pad ? 'bg-white text-[#111111] shadow-sm font-semibold' : 'text-[#737373] hover:text-[#111111]'
+                                      }`}
+                                    >
+                                      {pad === 0 ? 'None' : `${pad}%`}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
+
                   </div>
                 </>
               ) : (

@@ -23,7 +23,7 @@ export default function MaskRefiner({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
 
-  const [brushMode, setBrushMode] = useState<'erase' | 'restore' | 'pan' | 'wand'>('erase');
+  const [brushMode, setBrushMode] = useState<'erase' | 'restore' | 'pan' | 'wand'>('pan');
   const [brushSize, setBrushSize] = useState<number>(20);
   const [wandTolerance, setWandTolerance] = useState<number>(30);
   const [wandAction, setWandAction] = useState<'erase' | 'restore'>('erase');
@@ -657,7 +657,7 @@ export default function MaskRefiner({
               <button
                 type="button"
                 onClick={() => setBrushMode('erase')}
-                title="Erase (Remove) — E"
+                title="Eraser (Remove pixels) — E"
                 className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
                   brushMode === 'erase'
                     ? 'bg-[#EF4444] text-white shadow-sm'
@@ -665,7 +665,8 @@ export default function MaskRefiner({
                 }`}
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 20H7L3 16l11.293-11.293a1 1 0 011.414 0L20 9l-5 5 3 3 2-1v4z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 17.5l1-1" />
                 </svg>
               </button>
               {/* Restore */}
@@ -687,7 +688,7 @@ export default function MaskRefiner({
               <button
                 type="button"
                 onClick={() => setBrushMode('wand')}
-                title="Magic Wand — W"
+                title="Magic Wand — click area to erase or restore (toggle below)"
                 className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
                   brushMode === 'wand'
                     ? 'bg-purple-600 text-white shadow-sm'
@@ -719,10 +720,13 @@ export default function MaskRefiner({
             <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${
               brushMode === 'erase' ? 'bg-[#EF4444]/20 text-[#EF4444]' :
               brushMode === 'restore' ? 'bg-[#22C55E]/20 text-[#22C55E]' :
-              brushMode === 'wand' ? 'bg-purple-500/20 text-purple-400' :
+              brushMode === 'wand' ? (wandAction === 'erase' ? 'bg-[#EF4444]/20 text-[#EF4444]' : 'bg-[#22C55E]/20 text-[#22C55E]') :
               'bg-[#3B82F6]/20 text-[#3B82F6]'
             }`}>
-              {brushMode === 'erase' ? 'Erase' : brushMode === 'restore' ? 'Restore' : brushMode === 'wand' ? 'Wand' : 'Pan'}
+              {brushMode === 'erase' ? 'Eraser' :
+               brushMode === 'restore' ? 'Restore Brush' :
+               brushMode === 'wand' ? `Wand • ${wandAction === 'erase' ? 'Erase' : 'Restore'}` :
+               'Pan'}
             </span>
 
             {/* Separator */}
