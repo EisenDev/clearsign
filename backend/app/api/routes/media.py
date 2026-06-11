@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
@@ -14,12 +15,23 @@ from app.workers.bg_removal import remove_background_task
 router = APIRouter(prefix="/api/media", tags=["media"])
 settings = get_settings()
 
+RemovalMode = Literal["auto", "portrait", "product", "logo", "signature", "anime"]
+
 
 class RemoveBackgroundRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    image_url: HttpUrl = Field(..., description="Publicly accessible Cloudflare R2 URL for the source image.")
+    image_url: HttpUrl = Field(..., description="Publicly accessible URL for the source image.")
     user_id: str = Field(..., min_length=1, max_length=128)
+
+    # Removal mode selects the AI model and post-processing pipeline
+    mode: RemovalMode = Field(default="auto", description="Removal mode (auto, portrait, product, logo, signature, anime).")
+
+    # Precision options
+    alpha_matting: bool = Field(default=False, description="Enable alpha matting for fine edge detail (hair, fur).")
+    shadow_removal: bool = Field(default=False, description="Detect and remove soft drop-shadows.")
+    edge_feather: int = Field(default=0, ge=0, le=10, description="Gaussian blur radius to soften alpha edges (0 = off).")
+    defringe: bool = Field(default=False, description="Remove colour halo fringing left by the original background.")
 
 
 class RemoveBackgroundAcceptedResponse(BaseModel):
@@ -75,7 +87,15 @@ async def enqueue_background_removal(
     job_id = str(uuid4())
     job_record = create_job(job_id=job_id, user_id=payload.user_id, input_url=str(payload.image_url))
 
-    remove_background_task.delay(job_id=job_id, image_url=str(payload.image_url))
+    remove_background_task.delay(
+        job_id=job_id,
+        image_url=str(payload.image_url),
+        mode=payload.mode,
+        alpha_matting=payload.alpha_matting,
+        shadow_removal=payload.shadow_removal,
+        edge_feather=payload.edge_feather,
+        defringe=payload.defringe,
+    )
 
     return RemoveBackgroundAcceptedResponse(job_id=job_id, status=job_record.status)
 
