@@ -178,6 +178,19 @@ export default function BackgroundRemover({
 
   // ── Global mode & precision controls (applied to all new jobs) ──────────────
   const [selectedMode, setSelectedMode] = useState<RemovalMode>('auto');
+
+  const handleModeChange = useCallback((modeId: RemovalMode) => {
+    setSelectedMode(modeId);
+    if (selectedId) {
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === selectedId && (item.status === 'PENDING' || item.status === 'FAILED')
+            ? { ...item, mode: modeId }
+            : item
+        )
+      );
+    }
+  }, [selectedId]);
   const [alphaMattingEnabled, setAlphaMattingEnabled] = useState<boolean>(false);
   const [shadowRemovalEnabled, setShadowRemovalEnabled] = useState<boolean>(false);
   const [edgeFeather, setEdgeFeather] = useState<number>(0);
@@ -689,7 +702,7 @@ export default function BackgroundRemover({
                 key={mode.id}
                 type="button"
                 id={`mode-btn-${mode.id}`}
-                onClick={() => setSelectedMode(mode.id)}
+                onClick={() => handleModeChange(mode.id)}
                 className={`relative flex flex-col items-center gap-2 p-3 rounded-[10px] border text-center transition-all duration-150 hover:scale-[1.02] active:scale-[0.98] ${
                   selectedMode === mode.id
                     ? 'border-[#2563EB] bg-[#EFF6FF] text-[#2563EB] shadow-[0_0_0_2px_rgba(37,99,235,0.15)]'

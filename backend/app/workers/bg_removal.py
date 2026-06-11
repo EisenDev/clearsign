@@ -17,6 +17,7 @@ from typing import Any, Final, cast
 from urllib.parse import urlparse
 
 import boto3
+import cv2
 import numpy as np
 import requests
 from botocore.client import BaseClient
@@ -173,37 +174,53 @@ def _alpha_channel(processed_png: bytes) -> tuple[Image.Image, np.ndarray]:
     return img, arr
 
 
-def clean_alpha_mask(processed_png: bytes) -> bytes:
-    """Remove background bleed-through and fill internal holes.
+def remove_isolated_noise_cv2(alpha: np.ndarray, min_area: int = 100) -> np.ndarray:
+    """Find connected components in the alpha mask and remove small isolated noise regions."""
+    # Binarize alpha (non-zero pixels)
+    _, thresh = cv2.threshold(alpha, 1, 255, cv2.THRESH_BINARY)
 
-    Strategy:
-    1. Hard-cut near-zero alpha (noise pixels from bad segmentation).
-    2. Morphological closing (dilate → erode) to fill gaps inside the subject.
-    3. Morphological opening (erode → dilate) to remove tiny isolated specks.
-    4. Gentle Gaussian smooth to remove staircase jaggies.
+    # Connected components
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh, connectivity=8)
+
+    # We create a boolean mask of pixels to keep. Label 0 is the background, so we exclude it.
+    keep_mask = np.zeros_like(alpha, dtype=bool)
+
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area >= min_area:
+            keep_mask[labels == i] = True
+
+    # Set pixels not in keep_mask to 0
+    return np.where(keep_mask, alpha, 0).astype(np.uint8)
+
+
+def clean_alpha_mask(processed_png: bytes, mode: str) -> bytes:
+    """Clean the alpha mask adaptively based on the removal mode.
+
+    - For all modes: Remove small isolated background noise specks using connected components.
+    - For non-portrait/non-auto modes (like logo, product): Keep clean boundaries.
+    - For portrait and auto modes: Avoid aggressive morphological operations that destroy hair/edges.
     """
     img, arr = _alpha_channel(processed_png)
     alpha = arr[:, :, 3].copy()
 
-    # 1. Hard threshold: drop faint background noise
-    alpha = np.where(alpha < 12, 0, alpha)
-    # Hard-cap near-opaque: consolidate anything >=240 to 255
-    alpha = np.where(alpha > 240, 255, alpha)
+    # 1. Drop very faint noise pixels below threshold 5
+    alpha = np.where(alpha < 5, 0, alpha)
 
+    # 2. Remove isolated noise blobs using OpenCV connected components
+    alpha = remove_isolated_noise_cv2(alpha, min_area=100)
+
+    if mode in ("logo", "product"):
+        # For logos and products, apply a mild morphological closing to fill inner holes
+        pil_a = Image.fromarray(alpha, mode="L")
+        pil_a = pil_a.filter(ImageFilter.MaxFilter(5))  # dilate
+        pil_a = pil_a.filter(ImageFilter.MinFilter(5))  # erode
+        alpha = np.array(pil_a)
+
+    # 3. Soften the mask boundaries slightly to prevent staircasing
     pil_a = Image.fromarray(alpha, mode="L")
-
-    # 2. Morphological closing: fill small holes (e.g. gaps inside hair)
-    size_close = 7
-    pil_a = pil_a.filter(ImageFilter.MaxFilter(size_close))  # dilate
-    pil_a = pil_a.filter(ImageFilter.MinFilter(size_close))  # erode back
-
-    # 3. Morphological opening: remove tiny isolated noise blobs
-    size_open = 3
-    pil_a = pil_a.filter(ImageFilter.MinFilter(size_open))   # erode
-    pil_a = pil_a.filter(ImageFilter.MaxFilter(size_open))   # dilate back
-
-    # 4. Very subtle smoothing to soften the staircase without blurring edges
-    pil_a = pil_a.filter(ImageFilter.GaussianBlur(radius=0.6))
+    blur_radius = 0.4 if mode == "portrait" else 0.6
+    pil_a = pil_a.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
     out = arr.copy()
     out[:, :, 3] = np.clip(np.array(pil_a), 0, 255).astype(np.uint8)
@@ -215,16 +232,14 @@ def clean_alpha_mask(processed_png: bytes) -> bytes:
 def sharpen_alpha_contrast(processed_png: bytes) -> bytes:
     """Push semi-transparent pixels toward either fully opaque or fully transparent.
 
-    Uses a piecewise linear remap: values in the lower 15% → 0,
-    values in the upper 15% → 255, and a steeper curve in-between.
-    This eliminates the "misty" semi-transparent background bleed that
-    fools the eye into seeing leftover background.
+    Uses a very gentle piecewise linear remap to avoid producing jagged edges
+    while cleaning up faint boundary mist.
     """
     img, arr = _alpha_channel(processed_png)
     alpha = arr[:, :, 3].astype(np.float32)
 
-    # Piecewise remap: [0,30] → 0, [30,220] → linear stretch to [0,255], [220,255] → 255
-    lo, hi = 30.0, 220.0
+    # Gentle stretch: values below 10 become 0, values above 245 become 255.
+    lo, hi = 10.0, 245.0
     alpha = np.clip((alpha - lo) / (hi - lo), 0.0, 1.0) * 255.0
 
     out = arr.copy()
@@ -273,25 +288,42 @@ def apply_edge_feather(processed_png: bytes, radius: int) -> bytes:
 
 
 def apply_defringe(processed_png: bytes) -> bytes:
-    """Replace semi-transparent edge pixel colours with blurred interior colour.
+    """Remove color fringing (halo) using alpha-weighted color decontamination.
 
-    This removes the colour halo ('fringe') left by the original background
-    bleeding into the transition zone.
+    This blurs only the foreground colors (weighted by alpha) and normalizes by
+    the blurred alpha mask. This mathematically prevents the background colors
+    from bleeding into the transition edge zone.
     """
-    img = Image.open(io.BytesIO(processed_png)).convert("RGBA")
-    arr = np.asarray(img, dtype=np.float32)
-    a = arr[:, :, 3] / 255.0
+    img, arr = _alpha_channel(processed_png)
+    rgb = arr[:, :, :3].astype(np.float32)
+    alpha = (arr[:, :, 3].astype(np.float32)) / 255.0
 
-    for c in range(3):
-        channel = Image.fromarray(arr[:, :, c].astype(np.uint8), mode="L")
-        blurred = channel.filter(ImageFilter.GaussianBlur(radius=2))
-        blurred_arr = np.asarray(blurred, dtype=np.float32)
-        # Only replace pixels in the semi-transparent fringe zone
-        mask = (a > 0.05) & (a < 0.90)
-        arr[:, :, c] = np.where(mask, blurred_arr, arr[:, :, c])
+    # Pre-multiply RGB by alpha to focus only on foreground colors
+    rgb_prem = rgb * alpha[:, :, np.newaxis]
 
+    # Blur the pre-multiplied RGB and the alpha channel
+    radius = 5
+    kernel_size = radius * 2 + 1
+    rgb_prem_blur = cv2.GaussianBlur(rgb_prem, (kernel_size, kernel_size), 0)
+    alpha_blur = cv2.GaussianBlur(alpha, (kernel_size, kernel_size), 0)
+
+    # Avoid division by zero
+    alpha_blur_safe = np.where(alpha_blur < 1e-4, 1e-4, alpha_blur)
+
+    # Calculate decontaminated color
+    decontam_rgb = rgb_prem_blur / alpha_blur_safe[:, :, np.newaxis]
+    decontam_rgb = np.clip(decontam_rgb, 0, 255)
+
+    # Only apply decontamination to the transition zone (e.g. 0.02 < alpha < 0.85)
+    # Fully opaque pixels remain unchanged. Fully transparent pixels remain transparent.
+    mask = (alpha > 0.02) & (alpha < 0.85)
+
+    final_rgb = rgb.copy()
+    final_rgb[mask] = decontam_rgb[mask]
+
+    out = np.dstack((final_rgb.astype(np.uint8), arr[:, :, 3]))
     buf = io.BytesIO()
-    Image.fromarray(arr.astype(np.uint8), mode="RGBA").save(buf, format="PNG")
+    Image.fromarray(out, mode="RGBA").save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -415,11 +447,12 @@ def run_removal_pipeline(
         raise TypeError("rembg.remove returned an unexpected payload type.")
 
     # ── Step 2: always clean the mask ────────────────────────────────────────
-    processed = clean_alpha_mask(processed)
+    processed = clean_alpha_mask(processed, mode=mode)
 
     # ── Step 3: sharpen alpha contrast to kill semi-transparent bleed ─────────
     # Skip for signature/logo which have their own binarisation logic.
-    if mode not in ("signature", "logo"):
+    # Also skip for portrait mode and if alpha matting is active.
+    if mode not in ("signature", "logo", "portrait") and not use_alpha_matting:
         processed = sharpen_alpha_contrast(processed)
 
     # ── Step 4: mode-specific passes ─────────────────────────────────────────
