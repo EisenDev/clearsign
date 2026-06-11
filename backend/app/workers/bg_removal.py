@@ -44,15 +44,15 @@ DOCUMENT_MAX_STROKE_GRAYSCALE: Final[int] = 245
 DOCUMENT_STROKE_SATURATION_THRESHOLD: Final[int] = 72
 
 # ─── Removal mode → model mapping ─────────────────────────────────────────────
-# BiRefNet (2024 SOTA) dramatically outperforms older isnet/u2net models.
-# Especially for portraits with complex hair, edges, and varied backgrounds.
+# We use lighter models (isnet-general-use, u2net) by default for CPU-only systems
+# to ensure extremely fast processing (<2-3s) without pegging CPU performance.
 MODE_MODEL_MAP: Final[dict[str, str]] = {
-    "auto":      "birefnet-general",    # BiRefNet general – best overall quality
-    "portrait":  "birefnet-portrait",   # BiRefNet specifically trained on portraits
-    "product":   "birefnet-general",    # BiRefNet general handles products well
+    "auto":      "isnet-general-use",   # High-accuracy general model (~170MB), fast on CPU
+    "portrait":  "u2net_human_seg",     # Fast human portrait segmentation (~170MB)
+    "product":   "u2net",               # Fast general product/object segmentation (~176MB)
     "logo":      "isnet-general-use",   # Logos/graphics: isnet with binary post-process
     "signature": "isnet-general-use",   # Signature: custom stroke-preservation pipeline
-    "anime":     "isnet_anime",         # Anime/illustration-specific model
+    "anime":     "isnet-anime",         # Anime/illustration-specific model (fixes session error)
 }
 
 # Per-mode alpha matting parameters (fg_threshold, bg_threshold, erode_size).
@@ -417,7 +417,7 @@ def run_removal_pipeline(
     """Full background removal pipeline routed by mode.
 
     Pipeline order:
-    1. rembg core segmentation (BiRefNet / isnet / u2net depending on mode)
+    1. rembg core segmentation (isnet / u2net depending on mode)
     2. Alpha mask cleanup (morphological closing/opening + noise cut)
     3. Alpha contrast sharpening (push semi-transparent bleed toward 0/255)
     4. Mode-specific passes (signature stroke rescue, logo binarise)
@@ -425,7 +425,7 @@ def run_removal_pipeline(
     6. Optional: defringe (colour halo removal)
     7. Optional: edge feather (Gaussian alpha blur)
     """
-    model_name = MODE_MODEL_MAP.get(mode, "birefnet-general")
+    model_name = MODE_MODEL_MAP.get(mode, "isnet-general-use")
     session = new_session(model_name)
 
     # Per-mode alpha matting thresholds
@@ -503,7 +503,7 @@ def remove_background_task(
             "job_id": job_id,
             "image_url": image_url,
             "mode": mode,
-            "model": MODE_MODEL_MAP.get(mode, "birefnet-general"),
+            "model": MODE_MODEL_MAP.get(mode, "isnet-general-use"),
             "alpha_matting": alpha_matting,
             "shadow_removal": shadow_removal,
             "edge_feather": edge_feather,
