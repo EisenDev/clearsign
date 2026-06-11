@@ -179,8 +179,14 @@ export default function BackgroundRemover({
   } | null>(null);
 
 
-  // Preview background toggle: transparent, white, black
-  const [bgMode, setBgMode] = useState<'transparent' | 'white' | 'black'>('transparent');
+  // Design Studio settings
+  const [bgType, setBgType] = useState<'transparent' | 'color' | 'gradient' | 'image'>('transparent');
+  const [bgColor, setBgColor] = useState<string>('#FFFFFF');
+  const [bgGradient, setBgGradient] = useState<string>('linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%)');
+  const [bgImage, setBgImage] = useState<string | null>(null);
+  const [shadowEffect, setShadowEffect] = useState<'none' | 'soft' | 'deep' | 'glow'>('none');
+  const [aspectRatio, setAspectRatio] = useState<'original' | '1:1' | '4:5' | '16:9'>('original');
+  const [padding, setPadding] = useState<number>(0);
 
   // Split slider workspace state
   const [sliderPosition, setSliderPosition] = useState<number>(50);
@@ -589,15 +595,156 @@ export default function BackgroundRemover({
 
   const handleDownload = useCallback(async (item: BatchItem): Promise<void> => {
     if (!item.outputUrl) return;
-    try {
-      const response = await fetch(item.outputUrl);
-      if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-      const blob = await response.blob();
-      saveAs(blob, item.file.name.replace(/\.[^.]+$/, '') + '.png');
-    } catch {
-      try { saveAs(item.outputUrl, item.file.name); } catch { setGlobalError(`Failed to download ${item.file.name}`); }
+
+    // Fast-path: If transparent, no shadow, original aspect ratio and 0 padding, download raw image
+    if (bgType === 'transparent' && shadowEffect === 'none' && aspectRatio === 'original' && padding === 0) {
+      try {
+        const response = await fetch(item.outputUrl);
+        if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+        const blob = await response.blob();
+        saveAs(blob, item.file.name.replace(/\.[^.]+$/, '') + '.png');
+        return;
+      } catch {
+        try { saveAs(item.outputUrl, item.file.name); return; } catch { /* Fallback to canvas compositor below */ }
+      }
     }
-  }, []);
+
+    setIsZipping(true); // Re-use zipping spinner overlay for loading state
+    try {
+      // 1. Load the processed subject image
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = item.outputUrl + (item.outputUrl.includes('?') ? '&' : '?') + `t=${Date.now()}`;
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+
+      // 2. Load background image if custom image mode
+      let bgImg: HTMLImageElement | null = null;
+      if (bgType === 'image' && bgImage) {
+        bgImg = new Image();
+        bgImg.src = bgImage;
+        await new Promise((resolve, reject) => {
+          bgImg!.onload = resolve;
+          bgImg!.onerror = reject;
+        });
+      }
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Could not create canvas context');
+
+      // Determine canvas dimensions based on aspect ratio preset
+      let canvasWidth = img.naturalWidth;
+      let canvasHeight = img.naturalHeight;
+
+      if (aspectRatio === '1:1') {
+        const size = Math.max(canvasWidth, canvasHeight);
+        canvasWidth = size;
+        canvasHeight = size;
+      } else if (aspectRatio === '4:5') {
+        const targetAspect = 4 / 5;
+        if (canvasWidth / canvasHeight > targetAspect) {
+          canvasHeight = Math.round(canvasWidth / targetAspect);
+        } else {
+          canvasWidth = Math.round(canvasHeight * targetAspect);
+        }
+      } else if (aspectRatio === '16:9') {
+        const targetAspect = 16 / 9;
+        if (canvasWidth / canvasHeight > targetAspect) {
+          canvasHeight = Math.round(canvasWidth / targetAspect);
+        } else {
+          canvasWidth = Math.round(canvasHeight * targetAspect);
+        }
+      }
+
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+
+      // 3. Draw background layer
+      if (bgType === 'color') {
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      } else if (bgType === 'gradient') {
+        const grad = ctx.createLinearGradient(0, 0, canvasWidth, canvasHeight);
+        if (bgGradient.includes('#FF6B6B')) { // Sunset
+          grad.addColorStop(0, '#FF6B6B'); grad.addColorStop(1, '#FF8E53');
+        } else if (bgGradient.includes('#0575E6')) { // Northern Lights
+          grad.addColorStop(0, '#0575E6'); grad.addColorStop(1, '#00F260');
+        } else if (bgGradient.includes('#DA4453')) { // Royal Plum
+          grad.addColorStop(0, '#DA4453'); grad.addColorStop(1, '#89216B');
+        } else if (bgGradient.includes('#11998e')) { // Emerald Sea
+          grad.addColorStop(0, '#11998e'); grad.addColorStop(1, '#38ef7d');
+        } else { // Custom Gradient
+          grad.addColorStop(0, '#F953C6'); grad.addColorStop(1, '#B91D73');
+        }
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      } else if (bgType === 'image' && bgImg) {
+        // Draw background image scaled cover
+        const scaleFactor = Math.max(canvasWidth / bgImg.width, canvasHeight / bgImg.height);
+        const w = bgImg.width * scaleFactor;
+        const h = bgImg.height * scaleFactor;
+        const x = (canvasWidth - w) / 2;
+        const y = (canvasHeight - h) / 2;
+        ctx.drawImage(bgImg, x, y, w, h);
+      }
+
+      // 4. Setup Shadow parameters
+      if (shadowEffect !== 'none') {
+        ctx.shadowColor = shadowEffect === 'glow' ? 'rgba(59, 130, 246, 0.65)' : 'rgba(0, 0, 0, 0.35)';
+        if (shadowEffect === 'soft') {
+          ctx.shadowBlur = Math.round(canvasWidth * 0.03);
+          ctx.shadowOffsetY = Math.round(canvasHeight * 0.015);
+        } else if (shadowEffect === 'deep') {
+          ctx.shadowBlur = Math.round(canvasWidth * 0.08);
+          ctx.shadowOffsetY = Math.round(canvasHeight * 0.04);
+        } else if (shadowEffect === 'glow') {
+          ctx.shadowBlur = Math.round(canvasWidth * 0.05);
+          ctx.shadowOffsetY = 0;
+        }
+      }
+
+      // 5. Draw Subject centering with padding
+      const paddingPx = (padding / 100) * Math.min(canvasWidth, canvasHeight);
+      const availableWidth = canvasWidth - paddingPx * 2;
+      const availableHeight = canvasHeight - paddingPx * 2;
+      const imgAspect = img.naturalWidth / img.naturalHeight;
+
+      let drawWidth = availableWidth;
+      let drawHeight = availableWidth / imgAspect;
+
+      if (drawHeight > availableHeight) {
+        drawHeight = availableHeight;
+        drawWidth = availableHeight * imgAspect;
+      }
+
+      const drawX = (canvasWidth - drawWidth) / 2;
+      const drawY = (canvasHeight - drawHeight) / 2;
+
+      ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+
+      // Reset shadow parameters
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+
+      canvas.toBlob((blob) => {
+        if (blob) {
+          saveAs(blob, item.file.name.replace(/\.[^.]+$/, '') + '-edited.png');
+        } else {
+          throw new Error('toBlob failed');
+        }
+      }, 'image/png');
+    } catch (err: unknown) {
+      console.error('Failed to create composite download', err);
+      setGlobalError('Failed to create composite. Downloading raw transparent image.');
+      try { saveAs(item.outputUrl, item.file.name); } catch { /* ignore */ }
+    } finally {
+      setIsZipping(false);
+    }
+  }, [bgType, bgColor, bgGradient, bgImage, shadowEffect, aspectRatio, padding]);
 
   const handleDownloadAll = useCallback(async (currentItems: BatchItem[]): Promise<void> => {
     const completed = currentItems.filter((i) => i.status === 'COMPLETED' && i.outputUrl);
@@ -640,11 +787,26 @@ export default function BackgroundRemover({
     return () => { window.removeEventListener('mouseup', up); window.removeEventListener('touchend', up); };
   }, []);
 
-  const previewBgClass = useMemo(() => {
-    if (bgMode === 'white') return 'bg-white';
-    if (bgMode === 'black') return 'bg-[#111111]';
-    return 'bg-checkerboard-classic';
-  }, [bgMode]);
+  const previewBgStyle = useMemo(() => {
+    if (bgType === 'color') return { backgroundColor: bgColor };
+    if (bgType === 'gradient') return { backgroundImage: bgGradient };
+    if (bgType === 'image' && bgImage) {
+      return { 
+        backgroundImage: `url(${bgImage})`, 
+        backgroundSize: 'cover', 
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat'
+      };
+    }
+    return {};
+  }, [bgType, bgColor, bgGradient, bgImage]);
+
+  const shadowFilter = useMemo(() => {
+    if (shadowEffect === 'soft') return 'drop-shadow(0 6px 12px rgba(0,0,0,0.18))';
+    if (shadowEffect === 'deep') return 'drop-shadow(0 18px 36px rgba(0,0,0,0.32))';
+    if (shadowEffect === 'glow') return 'drop-shadow(0 0 25px rgba(59, 130, 246, 0.45))';
+    return 'none';
+  }, [shadowEffect]);
 
   const currentMode = useMemo(() => MODES.find((m) => m.id === selectedMode)!, [selectedMode]);
 
@@ -1129,37 +1291,6 @@ export default function BackgroundRemover({
                     </div>
 
                     <div className="flex items-center gap-3">
-                      {/* Background Color Toggle */}
-                      <div className="flex items-center border border-[#E5E5E5] rounded-[6px] p-0.5 bg-[#F4F4F4]">
-                        {(['transparent', 'white', 'black'] as const).map((mode) => (
-                          <button
-                            key={mode}
-                            type="button"
-                            onClick={() => setBgMode(mode)}
-                            className={`h-[28px] w-[28px] rounded-[4px] flex items-center justify-center transition-colors duration-100 ${
-                              bgMode === mode ? 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.1)] text-[#111111]' : 'text-[#737373] hover:text-[#111111]'
-                            }`}
-                            title={mode.charAt(0).toUpperCase() + mode.slice(1)}
-                          >
-                            {mode === 'transparent' && (
-                              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
-                              </svg>
-                            )}
-                            {mode === 'white' && (
-                              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-                              </svg>
-                            )}
-                            {mode === 'black' && (
-                              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
-                              </svg>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-
                       {selectedItem.status === 'COMPLETED' && selectedItem.outputUrl && (
                         <div className="flex items-center gap-2">
                           <button
@@ -1184,106 +1315,318 @@ export default function BackgroundRemover({
                           </button>
                         </div>
                       )}
-
                     </div>
                   </div>
 
                   {/* Workspace body */}
-                  <div className="flex flex-col gap-4">
-                    {/* PENDING */}
-                    {selectedItem.status === 'PENDING' && (
-                      <div className="relative w-full h-[380px] bg-[#FAFAFA] rounded-[8px] overflow-hidden border border-[#D4D4D4] flex items-center justify-center">
-                        <img src={selectedItem.localPreviewUrl} alt="Preview" className="max-h-[90%] max-w-[90%] object-contain rounded-lg" />
-                        <div className="absolute inset-0 bg-white/60 flex flex-col items-center justify-center p-6 text-center">
+                  <div className={selectedItem.status === 'COMPLETED' ? "grid grid-cols-1 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"}>
+                    
+                    {/* Left column: Preview workspace */}
+                    <div className={selectedItem.status === 'COMPLETED' ? "lg:col-span-2 flex flex-col gap-4" : "flex flex-col gap-4"}>
+                      {/* PENDING */}
+                      {selectedItem.status === 'PENDING' && (
+                        <div className="relative w-full h-[380px] bg-[#FAFAFA] rounded-[8px] overflow-hidden border border-[#D4D4D4] flex items-center justify-center">
+                          <img src={selectedItem.localPreviewUrl} alt="Preview" className="max-h-[90%] max-w-[90%] object-contain rounded-lg" />
+                          <div className="absolute inset-0 bg-white/60 flex flex-col items-center justify-center p-6 text-center">
+                            <button
+                              type="button"
+                              id="process-selected-btn"
+                              onClick={() => void handleProcessItem(selectedItem.id, selectedItem.file, selectedItem.mode)}
+                              className="h-12 w-12 rounded-full bg-[#111111] flex items-center justify-center text-white transition hover:scale-105 active:scale-95"
+                            >
+                              <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                            </button>
+                            <h4 className="text-[14px] font-medium text-[#111111] mt-3">Ready to process</h4>
+                            <p className="text-[12px] text-[#A3A3A3] mt-1">
+                              Using <span className="font-semibold text-[#2563EB]">{MODES.find((m) => m.id === selectedItem.mode)?.label}</span> mode
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* UPLOADING / PROCESSING */}
+                      {(selectedItem.status === 'UPLOADING' || selectedItem.status === 'PROCESSING') && (
+                        <div className="relative w-full h-[380px] bg-[#FAFAFA] rounded-[8px] overflow-hidden border border-[#D4D4D4] flex items-center justify-center">
+                          <img src={selectedItem.localPreviewUrl} alt="Preview" className="max-h-[90%] max-w-[90%] object-contain rounded-lg opacity-40 pointer-events-none" />
+                          <div className="absolute left-[5%] right-[5%] top-0 h-[1px] bg-[#2563EB] scanner-line pointer-events-none" />
+                          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-white/25">
+                            <div className="flex h-6 w-6 animate-spin rounded-full border-2 border-[#E5E5E5] border-t-[#2563EB]" />
+                            <h4 className="text-[14px] font-medium text-[#111111] mt-3">Processing...</h4>
+                            <p className="text-[12px] text-[#A3A3A3] mt-1">
+                              {MODES.find((m) => m.id === selectedItem.mode)?.label} mode
+                              {alphaMattingEnabled && ' · Alpha Matting'}
+                              {shadowRemovalEnabled && ' · Shadow Removal'}
+                              {defringeEnabled && ' · Defringe'}
+                              {edgeFeather > 0 && ` · Feather ${edgeFeather}`}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* FAILED */}
+                      {selectedItem.status === 'FAILED' && (
+                        <div className="relative w-full h-[380px] bg-[#FAFAFA] rounded-[8px] overflow-hidden border border-[#D4D4D4] flex flex-col items-center justify-center p-6 text-center">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#DC2626]/10 border border-[#DC2626]/20 text-[#DC2626]">
+                            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                          </div>
+                          <h4 className="text-[14px] font-medium text-[#111111] mt-3">Failed</h4>
+                          <p className="text-[13px] text-[#DC2626] max-w-sm mt-2 p-3 bg-[#DC2626]/5 rounded-[6px] border border-[#DC2626]/10">
+                            {selectedItem.error || 'Failed to remove background.'}
+                          </p>
                           <button
                             type="button"
-                            id="process-selected-btn"
                             onClick={() => void handleProcessItem(selectedItem.id, selectedItem.file, selectedItem.mode)}
-                            className="h-12 w-12 rounded-full bg-[#111111] flex items-center justify-center text-white transition hover:scale-105 active:scale-95"
+                            className="mt-4 inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] px-4 text-[13px] font-medium text-[#111111] transition bg-transparent hover:bg-[#F5F5F5]"
                           >
-                            <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                            Retry
                           </button>
-                          <h4 className="text-[14px] font-medium text-[#111111] mt-3">Ready to process</h4>
-                          <p className="text-[12px] text-[#A3A3A3] mt-1">
-                            Using <span className="font-semibold text-[#2563EB]">{MODES.find((m) => m.id === selectedItem.mode)?.label}</span> mode
-                          </p>
                         </div>
-                      </div>
-                    )}
+                      )}
 
-                    {/* UPLOADING / PROCESSING */}
-                    {(selectedItem.status === 'UPLOADING' || selectedItem.status === 'PROCESSING') && (
-                      <div className="relative w-full h-[380px] bg-[#FAFAFA] rounded-[8px] overflow-hidden border border-[#D4D4D4] flex items-center justify-center">
-                        <img src={selectedItem.localPreviewUrl} alt="Preview" className="max-h-[90%] max-w-[90%] object-contain rounded-lg opacity-40 pointer-events-none" />
-                        <div className="absolute left-[5%] right-[5%] top-0 h-[1px] bg-[#2563EB] scanner-line pointer-events-none" />
-                        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-white/25">
-                          <div className="flex h-6 w-6 animate-spin rounded-full border-2 border-[#E5E5E5] border-t-[#2563EB]" />
-                          <h4 className="text-[14px] font-medium text-[#111111] mt-3">Processing...</h4>
-                          <p className="text-[12px] text-[#A3A3A3] mt-1">
-                            {MODES.find((m) => m.id === selectedItem.mode)?.label} mode
-                            {alphaMattingEnabled && ' · Alpha Matting'}
-                            {shadowRemovalEnabled && ' · Shadow Removal'}
-                            {defringeEnabled && ' · Defringe'}
-                            {edgeFeather > 0 && ` · Feather ${edgeFeather}`}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* FAILED */}
-                    {selectedItem.status === 'FAILED' && (
-                      <div className="relative w-full h-[380px] bg-[#FAFAFA] rounded-[8px] overflow-hidden border border-[#D4D4D4] flex flex-col items-center justify-center p-6 text-center">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#DC2626]/10 border border-[#DC2626]/20 text-[#DC2626]">
-                          <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                          </svg>
-                        </div>
-                        <h4 className="text-[14px] font-medium text-[#111111] mt-3">Failed</h4>
-                        <p className="text-[13px] text-[#DC2626] max-w-sm mt-2 p-3 bg-[#DC2626]/5 rounded-[6px] border border-[#DC2626]/10">
-                          {selectedItem.error || 'Failed to remove background.'}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => void handleProcessItem(selectedItem.id, selectedItem.file, selectedItem.mode)}
-                          className="mt-4 inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] px-4 text-[13px] font-medium text-[#111111] transition bg-transparent hover:bg-[#F5F5F5]"
-                        >
-                          Retry
-                        </button>
-                      </div>
-                    )}
-
-                    {/* COMPLETED — interactive split slider */}
-                    {selectedItem.status === 'COMPLETED' && selectedItem.outputUrl && (
-                      <div className="flex flex-col gap-2">
-                        <div
-                          ref={sliderRef}
-                          className={`relative w-full h-[380px] rounded-[8px] overflow-hidden border border-[#D4D4D4] select-none transition-all duration-200 ${previewBgClass}`}
-                          onMouseMove={handleMouseMove}
-                          onTouchMove={handleTouchMove}
-                          onMouseDown={() => setIsDraggingSlider(true)}
-                          onTouchStart={() => setIsDraggingSlider(true)}
-                        >
-                          {/* After (processed) */}
-                          <div className="absolute inset-0 w-full h-full flex items-center justify-center">
-                            <img src={selectedItem.outputUrl} alt="Processed Result" className="max-h-[85%] max-w-[85%] object-contain pointer-events-none" />
-                          </div>
-                          {/* Before (original) clipped */}
+                      {/* COMPLETED — interactive split slider */}
+                      {selectedItem.status === 'COMPLETED' && selectedItem.outputUrl && (
+                        <div className="flex flex-col gap-2">
                           <div
-                            className="absolute inset-0 w-full h-full bg-[#FAFAFA] flex items-center justify-center pointer-events-none"
-                            style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
+                            ref={sliderRef}
+                            className={`relative w-full rounded-[8px] overflow-hidden border border-[#D4D4D4] select-none transition-all duration-200 ${
+                              bgType === 'transparent' ? 'bg-checkerboard-classic' : ''
+                            } ${
+                              aspectRatio === '1:1' ? 'aspect-square h-auto max-h-[380px]' :
+                              aspectRatio === '4:5' ? 'aspect-[4/5] h-auto max-h-[380px]' :
+                              aspectRatio === '16:9' ? 'aspect-[16/9] h-auto max-h-[380px]' :
+                              'h-[380px]'
+                            }`}
+                            style={previewBgStyle}
+                            onMouseMove={handleMouseMove}
+                            onTouchMove={handleTouchMove}
+                            onMouseDown={() => setIsDraggingSlider(true)}
+                            onTouchStart={() => setIsDraggingSlider(true)}
                           >
-                            <img src={selectedItem.localPreviewUrl} alt="Original Source" className="max-h-[85%] max-w-[85%] object-contain pointer-events-none" />
+                            {/* After (processed) */}
+                            <div className="absolute inset-0 w-full h-full flex items-center justify-center">
+                              <img 
+                                src={selectedItem.outputUrl} 
+                                alt="Processed Result" 
+                                className="max-h-[85%] max-w-[85%] object-contain pointer-events-none transition-all duration-200" 
+                                style={{ 
+                                  filter: shadowFilter,
+                                  padding: padding > 0 ? `${padding}%` : undefined
+                                }}
+                              />
+                            </div>
+                            {/* Before (original) clipped */}
+                            <div
+                              className="absolute inset-0 w-full h-full bg-[#FAFAFA] flex items-center justify-center pointer-events-none"
+                              style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
+                            >
+                              <img 
+                                src={selectedItem.localPreviewUrl} 
+                                alt="Original Source" 
+                                className="max-h-[85%] max-w-[85%] object-contain pointer-events-none" 
+                                style={{ 
+                                  padding: padding > 0 ? `${padding}%` : undefined
+                                }}
+                              />
+                            </div>
+                            {/* Divider */}
+                            <div className="absolute top-0 bottom-0 w-[2px] bg-white shadow-[0_0_8px_rgba(0,0,0,0.4)] pointer-events-none" style={{ left: `${sliderPosition}%` }}>
+                              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-[#E5E5E5] shadow-[0_2px_8px_rgba(0,0,0,0.15)] flex items-center justify-center text-[#737373] text-[11px] font-bold select-none cursor-grab active:cursor-grabbing pointer-events-none">
+                                ←→
+                              </div>
+                            </div>
+                            <div className="absolute bottom-3 left-3 bg-white px-2 py-0.5 rounded-[4px] text-[11px] font-medium text-[#111111] shadow-sm pointer-events-none select-none">Original</div>
+                            <div className="absolute bottom-3 right-3 bg-white px-2 py-0.5 rounded-[4px] text-[11px] font-medium text-[#111111] shadow-sm pointer-events-none select-none">Processed</div>
                           </div>
-                          {/* Divider */}
-                          <div className="absolute top-0 bottom-0 w-[2px] bg-white shadow-[0_0_8px_rgba(0,0,0,0.4)] pointer-events-none" style={{ left: `${sliderPosition}%` }}>
-                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-[#E5E5E5] shadow-[0_2px_8px_rgba(0,0,0,0.15)] flex items-center justify-center text-[#737373] text-[11px] font-bold select-none cursor-grab active:cursor-grabbing pointer-events-none">
-                              ←→
+                          <p className="text-[12px] text-[#A3A3A3] text-center select-none mt-1 font-medium">Drag to compare ←→</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right column: Design Studio Controls */}
+                    {selectedItem.status === 'COMPLETED' && (
+                      <div className="bg-[#FAFAFA] border border-[#E5E5E5] rounded-[12px] p-5 flex flex-col gap-5 shadow-sm text-neutral-800">
+                        <div>
+                          <h4 className="text-[12px] font-bold text-[#111111] uppercase tracking-wider">Design Studio</h4>
+                          <p className="text-[11px] text-[#A3A3A3] mt-0.5">Apply custom backdrops, shadows, and spacing.</p>
+                        </div>
+
+                        {/* Background Layer Select */}
+                        <div className="flex flex-col gap-2">
+                          <label className="text-[12px] font-semibold text-[#111111] flex items-center justify-between">
+                            <span>Background Layer</span>
+                            <span className="text-[11px] font-normal text-[#737373]">{bgType === 'transparent' ? 'Clear' : bgType}</span>
+                          </label>
+                          <div className="grid grid-cols-4 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[11px]">
+                            {(['transparent', 'color', 'gradient', 'image'] as const).map((type) => (
+                              <button
+                                key={type}
+                                type="button"
+                                onClick={() => setBgType(type)}
+                                className={`py-1 rounded-[6px] font-medium transition ${
+                                  bgType === type ? 'bg-white text-[#111111] shadow-sm' : 'text-[#737373] hover:text-[#111111]'
+                                }`}
+                              >
+                                {type === 'transparent' ? 'Clear' : 
+                                 type === 'color' ? 'Solid' : 
+                                 type === 'gradient' ? 'Grad' : 'Image'}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Solid Color options */}
+                          {bgType === 'color' && (
+                            <div className="flex items-center gap-2 flex-wrap bg-white border border-[#EFEFEF] rounded-[8px] p-2.5 shadow-sm">
+                              {['#FFFFFF', '#111111', '#F3F4F6', '#E8ECE9', '#E0F2FE', '#FAF0E6'].map((color) => (
+                                <button
+                                  key={color}
+                                  type="button"
+                                  onClick={() => setBgColor(color)}
+                                  className={`h-5.5 w-5.5 rounded-full border border-black/10 transition-transform ${
+                                    bgColor === color ? 'scale-110 ring-2 ring-blue-500' : 'hover:scale-105'
+                                  }`}
+                                  style={{ backgroundColor: color }}
+                                  title={color}
+                                />
+                              ))}
+                              {/* Custom Color Input */}
+                              <div className="relative h-5.5 w-5.5 rounded-full overflow-hidden border border-black/10 hover:scale-105">
+                                <input
+                                  type="color"
+                                  value={bgColor}
+                                  onChange={(e) => setBgColor(e.target.value)}
+                                  className="absolute inset-[-4px] w-[28px] h-[28px] cursor-pointer"
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Gradients options */}
+                          {bgType === 'gradient' && (
+                            <div className="flex items-center gap-2 flex-wrap bg-white border border-[#EFEFEF] rounded-[8px] p-2.5 shadow-sm">
+                              {[
+                                'linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%)',
+                                'linear-gradient(135deg, #0575E6 0%, #00F260 100%)',
+                                'linear-gradient(135deg, #DA4453 0%, #89216B 100%)',
+                                'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
+                                'linear-gradient(135deg, #F953C6 0%, #B91D73 100%)'
+                              ].map((grad, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => setBgGradient(grad)}
+                                  className={`h-5.5 w-5.5 rounded-full border border-black/10 transition-transform ${
+                                    bgGradient === grad ? 'scale-110 ring-2 ring-blue-500' : 'hover:scale-105'
+                                  }`}
+                                  style={{ backgroundImage: grad }}
+                                  title={`Gradient ${idx + 1}`}
+                                />
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Custom Image background */}
+                          {bgType === 'image' && (
+                            <div className="bg-white border border-[#EFEFEF] rounded-[8px] p-2.5 shadow-sm">
+                              {bgImage ? (
+                                <div className="flex items-center justify-between gap-2 text-[11px]">
+                                  <div 
+                                    className="h-8 w-8 rounded-[4px] border border-[#E5E5E5] bg-cover bg-center shrink-0"
+                                    style={{ backgroundImage: `url(${bgImage})` }}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setBgImage(null)}
+                                    className="font-semibold text-[#DC2626] hover:underline"
+                                  >
+                                    Remove BG
+                                  </button>
+                                </div>
+                              ) : (
+                                <label className="flex flex-col items-center justify-center py-2.5 border border-dashed border-[#D4D4D4] hover:border-[#A3A3A3] rounded-[6px] cursor-pointer transition">
+                                  <svg className="h-4 w-4 text-[#A3A3A3]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M14 8h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                  </svg>
+                                  <span className="text-[10px] text-[#737373] mt-1 font-medium">Upload background</span>
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) setBgImage(URL.createObjectURL(file));
+                                    }}
+                                  />
+                                </label>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Shadow Effects Selection */}
+                        <div className="flex flex-col gap-2">
+                          <label className="text-[12px] font-semibold text-[#111111]">Shadow Effect</label>
+                          <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                            {(['none', 'soft', 'deep', 'glow'] as const).map((eff) => (
+                              <button
+                                key={eff}
+                                type="button"
+                                onClick={() => setShadowEffect(eff)}
+                                className={`py-1.5 px-2 rounded-[6px] border font-medium transition text-center ${
+                                  shadowEffect === eff
+                                    ? 'bg-[#111111] border-[#111111] text-white shadow-sm'
+                                    : 'bg-white border-[#E5E5E5] text-[#737373] hover:border-[#A3A3A3] hover:text-[#111111]'
+                                }`}
+                              >
+                                {eff === 'none' ? 'None' :
+                                 eff === 'soft' ? 'Soft' :
+                                 eff === 'deep' ? 'Deep' : 'Glow'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Layout & Margins Spacing */}
+                        <div className="flex flex-col gap-3 border-t border-[#EFEFEF] pt-3">
+                          <label className="text-[12px] font-semibold text-[#111111]">Layout & Margins</label>
+                          
+                          <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] text-[#737373] font-medium">Aspect Ratio Preset</span>
+                            <div className="grid grid-cols-4 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[10px]">
+                              {(['original', '1:1', '4:5', '16:9'] as const).map((aspect) => (
+                                <button
+                                  key={aspect}
+                                  type="button"
+                                  onClick={() => setAspectRatio(aspect)}
+                                  className={`py-1 rounded-[6px] font-medium transition ${
+                                    aspectRatio === aspect ? 'bg-white text-[#111111] shadow-sm' : 'text-[#737373] hover:text-[#111111]'
+                                  }`}
+                                >
+                                  {aspect === 'original' ? 'Fit' : aspect}
+                                </button>
+                              ))}
                             </div>
                           </div>
-                          <div className="absolute bottom-3 left-3 bg-white px-2 py-0.5 rounded-[4px] text-[11px] font-medium text-[#111111] shadow-sm pointer-events-none select-none">Original</div>
-                          <div className="absolute bottom-3 right-3 bg-white px-2 py-0.5 rounded-[4px] text-[11px] font-medium text-[#111111] shadow-sm pointer-events-none select-none">Processed</div>
+
+                          <div className="flex flex-col gap-1.5">
+                            <span className="text-[11px] text-[#737373] font-medium">Auto Padding Spacing</span>
+                            <div className="grid grid-cols-3 gap-1 p-0.5 rounded-[8px] bg-[#E5E5E5]/50 border border-[#E5E5E5] text-[10px]">
+                              {([0, 10, 20] as const).map((pad) => (
+                                <button
+                                  key={pad}
+                                  type="button"
+                                  onClick={() => setPadding(pad)}
+                                  className={`py-1 rounded-[6px] font-medium transition ${
+                                    padding === pad ? 'bg-white text-[#111111] shadow-sm' : 'text-[#737373] hover:text-[#111111]'
+                                  }`}
+                                >
+                                  {pad === 0 ? '0%' : `${pad}%`}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
-                        <p className="text-[12px] text-[#A3A3A3] text-center select-none mt-1 font-medium">Drag to compare ←→</p>
                       </div>
                     )}
                   </div>
