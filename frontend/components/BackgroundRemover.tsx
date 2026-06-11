@@ -1658,39 +1658,40 @@ export default function BackgroundRemover({
                             onMouseDown={() => setIsDraggingSlider(true)}
                             onTouchStart={() => setIsDraggingSlider(true)}
                           >
-                            {/* After (processed) */}
-                            <div className="absolute inset-0 w-full h-full flex items-center justify-center pointer-events-none">
-                              <div 
-                                className="relative max-h-[85%] max-w-[85%] w-full h-full flex items-center justify-center"
-                                style={{ 
-                                  padding: padding > 0 ? `${padding}%` : undefined
+                            {/* ── Processed (After) layer — always full size, behind clip ── */}
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                              <div
+                                className="relative flex items-center justify-center"
+                                style={{
+                                  width: '85%',
+                                  height: '85%',
+                                  padding: padding > 0 ? `${padding}%` : undefined,
+                                  alignItems: alignSubject === 'bottom' ? 'flex-end' : 'center',
                                 }}
                               >
-                                <div 
-                                  className="relative flex transition-all duration-200"
+                                {/* Grid wrapper so harmonization overlay stacks exactly on img */}
+                                <div
                                   style={{
                                     display: 'grid',
                                     gridTemplateColumns: '1fr',
                                     gridTemplateRows: '1fr',
                                     maxHeight: '100%',
                                     maxWidth: '100%',
-                                    alignSelf: alignSubject === 'bottom' ? 'flex-end' : 'center',
                                   }}
                                 >
-                                  <img 
-                                    src={selectedItem.outputUrl} 
-                                    alt="Processed Result" 
-                                    className="max-h-full max-w-full h-auto w-auto object-contain transition-all duration-200" 
-                                    style={{ 
+                                  <img
+                                    src={selectedItem.outputUrl}
+                                    alt="Processed Result"
+                                    className="max-h-full max-w-full h-auto w-auto object-contain"
+                                    style={{
                                       gridArea: '1 / 1',
                                       filter: shadowType === 'drop' ? dropShadowFilterStyle : 'none',
                                     }}
                                   />
-                                  
                                   {/* Color Harmonization overlay */}
                                   {harmonizeAmount > 0 && (
-                                    <div 
-                                      className="pointer-events-none transition-opacity"
+                                    <div
+                                      className="pointer-events-none"
                                       style={{
                                         gridArea: '1 / 1',
                                         backgroundColor: bgAverageColor,
@@ -1698,11 +1699,9 @@ export default function BackgroundRemover({
                                         opacity: (harmonizeAmount / 100) * 0.35,
                                         WebkitMaskImage: `url(${selectedItem.outputUrl})`,
                                         WebkitMaskSize: '100% 100%',
-                                        WebkitMaskPosition: 'center',
                                         WebkitMaskRepeat: 'no-repeat',
                                         maskImage: `url(${selectedItem.outputUrl})`,
                                         maskSize: '100% 100%',
-                                        maskPosition: 'center',
                                         maskRepeat: 'no-repeat',
                                         width: '100%',
                                         height: '100%',
@@ -1710,10 +1709,9 @@ export default function BackgroundRemover({
                                     />
                                   )}
                                 </div>
-                                
-                                {/* Contact Shadow overlay */}
+                                {/* Contact Shadow */}
                                 {shadowType === 'contact' && (
-                                  <div 
+                                  <div
                                     className="absolute rounded-full pointer-events-none"
                                     style={{
                                       bottom: '0px',
@@ -1728,29 +1726,34 @@ export default function BackgroundRemover({
                                 )}
                               </div>
                             </div>
-                            {/* Before (original) clipped */}
+
+                            {/* ── Original (Before) layer — same layout, clipped from right ── */}
                             <div
-                              className="absolute inset-0 w-full h-full bg-[#FAFAFA] flex items-center justify-center pointer-events-none"
+                              className="absolute inset-0 flex items-center justify-center pointer-events-none bg-[#FAFAFA]"
                               style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
                             >
-                              <div 
-                                className="relative max-h-[85%] max-w-[85%] w-full h-full flex items-center justify-center"
-                                style={{ 
-                                  padding: padding > 0 ? `${padding}%` : undefined
+                              <div
+                                className="flex items-center justify-center"
+                                style={{
+                                  width: '85%',
+                                  height: '85%',
+                                  padding: padding > 0 ? `${padding}%` : undefined,
+                                  alignItems: alignSubject === 'bottom' ? 'flex-end' : 'center',
                                 }}
                               >
-                                <img 
-                                  src={selectedItem.localPreviewUrl} 
-                                  alt="Original Source" 
-                                  className="max-h-full max-w-full object-contain" 
-                                  style={{ 
-                                    alignSelf: alignSubject === 'bottom' ? 'flex-end' : 'center',
-                                  }}
+                                <img
+                                  src={selectedItem.localPreviewUrl}
+                                  alt="Original Source"
+                                  className="max-h-full max-w-full h-auto w-auto object-contain"
                                 />
                               </div>
                             </div>
-                            {/* Divider */}
-                            <div className="absolute top-0 bottom-0 w-[2px] bg-white shadow-[0_0_8px_rgba(0,0,0,0.4)] pointer-events-none" style={{ left: `${sliderPosition}%` }}>
+
+                            {/* Divider handle */}
+                            <div
+                              className="absolute top-0 bottom-0 w-[2px] bg-white shadow-[0_0_8px_rgba(0,0,0,0.4)] pointer-events-none"
+                              style={{ left: `${sliderPosition}%` }}
+                            >
                               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-[#E5E5E5] shadow-[0_2px_8px_rgba(0,0,0,0.15)] flex items-center justify-center text-[#737373] text-[11px] font-bold select-none cursor-grab active:cursor-grabbing pointer-events-none">
                                 ←→
                               </div>
