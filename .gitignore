@@ -1,0 +1,48 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.env
+.venv
+env/
+venv/
+ENV/
+
+# ─── Backend storage & logs ────────────────────────────────────────────────────
+backend/storage/
+backend/celery.log
+backend/uvicorn.log
+backend/.celery/
+
+# ─── Node / Next.js ───────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/nextjs.log
+frontend/tsconfig.tsbuildinfo
+.npm
+*.tsbuildinfo
+
+# ─── Environment files ────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+
+# ─── OS / Editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+*.log
+*.sqlite3

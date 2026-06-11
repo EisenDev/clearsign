@@ -1,0 +1,105 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@600&family=Inter:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #FAFAFA;
+  --bg-tertiary: #F4F4F4;
+  --border-default: #E5E5E5;
+  --border-strong: #D4D4D4;
+  --text-primary: #111111;
+  --text-secondary: #525252;
+  --text-muted: #A3A3A3;
+  --accent: #2563EB;
+  --accent-light: #EFF6FF;
+  --success: #16A34A;
+  --success-light: #F0FDF4;
+  --error: #DC2626;
+  --error-light: #FEF2F2;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Title Font Override */
+.app-title {
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  font-size: 20px;
+  letter-spacing: -0.5px;
+}
+
+/* Headings and labels letter spacing */
+h1, h2, h3, h4, h5, h6, label, button, .section-label {
+  letter-spacing: -0.01em;
+}
+
+/* Custom scrollbar for minimal light theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+/* Custom scanning animation for processing state */
+@keyframes scan {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(380px); }
+  100% { transform: translateY(0); }
+}
+
+.scanner-line {
+  animation: scan 2s ease-in-out infinite;
+}
+
+/* Classic 8px Checkerboard Pattern (Light Mode) */
+.bg-checkerboard-classic {
+  background-color: #ffffff;
+  background-image: 
+    linear-gradient(45deg, #CCCCCC 25%, transparent 25%),
+    linear-gradient(-45deg, #CCCCCC 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #CCCCCC 75%),
+    linear-gradient(-45deg, transparent 75%, #CCCCCC 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* Shimmer animation for progress bar */
+@keyframes progressShimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: 200px 0; }
+}
+
+.progress-shimmer {
+  background: linear-gradient(90deg, #2563EB 70%, #60a5fa 85%, #2563EB 100%);
+  background-size: 200px 100%;
+  animation: progressShimmer 1.5s infinite linear;
+}
+
+
