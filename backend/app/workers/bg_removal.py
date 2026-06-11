@@ -33,7 +33,7 @@ logger = cast(logging.Logger, get_task_logger(__name__))
 settings = get_settings()
 REQUEST_TIMEOUT_SECONDS: Final[float] = 30.0
 
-# Document / signature detection thresholds
+# ─── Document / Signature detection thresholds ────────────────────────────────
 DOCUMENT_WHITE_THRESHOLD: Final[int] = 235
 DOCUMENT_DARK_THRESHOLD: Final[int] = 208
 DOCUMENT_LOW_SATURATION_THRESHOLD: Final[int] = 42
@@ -42,16 +42,31 @@ DOCUMENT_STROKE_MARGIN: Final[int] = 10
 DOCUMENT_MAX_STROKE_GRAYSCALE: Final[int] = 245
 DOCUMENT_STROKE_SATURATION_THRESHOLD: Final[int] = 72
 
-# Removal mode → rembg model mapping
+# ─── Removal mode → model mapping ─────────────────────────────────────────────
+# BiRefNet (2024 SOTA) dramatically outperforms older isnet/u2net models.
+# Especially for portraits with complex hair, edges, and varied backgrounds.
 MODE_MODEL_MAP: Final[dict[str, str]] = {
-    "auto": "isnet-general-use",
-    "portrait": "u2net_human_seg",
-    "product": "u2net",
-    "logo": "isnet-general-use",
-    "signature": "isnet-general-use",
-    "anime": "isnet_anime",
+    "auto":      "birefnet-general",    # BiRefNet general – best overall quality
+    "portrait":  "birefnet-portrait",   # BiRefNet specifically trained on portraits
+    "product":   "birefnet-general",    # BiRefNet general handles products well
+    "logo":      "isnet-general-use",   # Logos/graphics: isnet with binary post-process
+    "signature": "isnet-general-use",   # Signature: custom stroke-preservation pipeline
+    "anime":     "isnet_anime",         # Anime/illustration-specific model
 }
 
+# Per-mode alpha matting parameters (fg_threshold, bg_threshold, erode_size).
+# These define the "uncertain zone" fed to PyMatting for transition refinement.
+MODE_MATTING_PARAMS: Final[dict[str, tuple[int, int, int]]] = {
+    "auto":      (240, 15, 10),
+    "portrait":  (240, 10, 15),  # wider erode to include more hair transition
+    "product":   (245, 10, 10),
+    "logo":      (250, 5,  5),
+    "signature": (245, 10, 8),
+    "anime":     (240, 15, 10),
+}
+
+
+# ─── Celery setup ─────────────────────────────────────────────────────────────
 
 def get_celery_app() -> Celery:
     celery_app = Celery(
@@ -74,15 +89,15 @@ def get_celery_app() -> Celery:
 celery_app = get_celery_app()
 
 
+# ─── Cloud / storage helpers ──────────────────────────────────────────────────
+
 def get_r2_client() -> BaseClient:
-    if not all(
-        [
-            settings.r2_account_id,
-            settings.r2_access_key_id,
-            settings.r2_secret_access_key,
-            settings.r2_bucket_name,
-        ]
-    ):
+    if not all([
+        settings.r2_account_id,
+        settings.r2_access_key_id,
+        settings.r2_secret_access_key,
+        settings.r2_bucket_name,
+    ]):
         raise RuntimeError("Missing one or more Cloudflare R2 environment variables.")
 
     endpoint_url = f"https://{settings.r2_account_id}.r2.cloudflarestorage.com"
@@ -120,15 +135,13 @@ def infer_source_filename(image_url: str, job_id: str) -> str:
 
 
 def upload_processed_png(job_id: str, png_bytes: bytes, source_url: str) -> str:
-    if not all(
-        [
-            settings.r2_account_id,
-            settings.r2_access_key_id,
-            settings.r2_secret_access_key,
-            settings.r2_bucket_name,
-            settings.r2_public_domain,
-        ]
-    ):
+    if not all([
+        settings.r2_account_id,
+        settings.r2_access_key_id,
+        settings.r2_secret_access_key,
+        settings.r2_bucket_name,
+        settings.r2_public_domain,
+    ]):
         local_path = settings.processed_dir / f"{job_id}.png"
         local_path.write_bytes(png_bytes)
         return f"{settings.backend_base_url}/storage/processed/{job_id}.png"
@@ -151,13 +164,154 @@ def upload_processed_png(job_id: str, png_bytes: bytes, source_url: str) -> str:
     return build_public_output_url(object_key)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Document / Signature helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# ─── Core alpha mask utilities ────────────────────────────────────────────────
+
+def _alpha_channel(processed_png: bytes) -> tuple[Image.Image, np.ndarray]:
+    """Return (rgba_pil_image, alpha_uint8_array)."""
+    img = Image.open(io.BytesIO(processed_png)).convert("RGBA")
+    arr = np.asarray(img, dtype=np.uint8)
+    return img, arr
+
+
+def clean_alpha_mask(processed_png: bytes) -> bytes:
+    """Remove background bleed-through and fill internal holes.
+
+    Strategy:
+    1. Hard-cut near-zero alpha (noise pixels from bad segmentation).
+    2. Morphological closing (dilate → erode) to fill gaps inside the subject.
+    3. Morphological opening (erode → dilate) to remove tiny isolated specks.
+    4. Gentle Gaussian smooth to remove staircase jaggies.
+    """
+    img, arr = _alpha_channel(processed_png)
+    alpha = arr[:, :, 3].copy()
+
+    # 1. Hard threshold: drop faint background noise
+    alpha = np.where(alpha < 12, 0, alpha)
+    # Hard-cap near-opaque: consolidate anything >=240 to 255
+    alpha = np.where(alpha > 240, 255, alpha)
+
+    pil_a = Image.fromarray(alpha, mode="L")
+
+    # 2. Morphological closing: fill small holes (e.g. gaps inside hair)
+    size_close = 7
+    pil_a = pil_a.filter(ImageFilter.MaxFilter(size_close))  # dilate
+    pil_a = pil_a.filter(ImageFilter.MinFilter(size_close))  # erode back
+
+    # 3. Morphological opening: remove tiny isolated noise blobs
+    size_open = 3
+    pil_a = pil_a.filter(ImageFilter.MinFilter(size_open))   # erode
+    pil_a = pil_a.filter(ImageFilter.MaxFilter(size_open))   # dilate back
+
+    # 4. Very subtle smoothing to soften the staircase without blurring edges
+    pil_a = pil_a.filter(ImageFilter.GaussianBlur(radius=0.6))
+
+    out = arr.copy()
+    out[:, :, 3] = np.clip(np.array(pil_a), 0, 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(out, mode="RGBA").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def sharpen_alpha_contrast(processed_png: bytes) -> bytes:
+    """Push semi-transparent pixels toward either fully opaque or fully transparent.
+
+    Uses a piecewise linear remap: values in the lower 15% → 0,
+    values in the upper 15% → 255, and a steeper curve in-between.
+    This eliminates the "misty" semi-transparent background bleed that
+    fools the eye into seeing leftover background.
+    """
+    img, arr = _alpha_channel(processed_png)
+    alpha = arr[:, :, 3].astype(np.float32)
+
+    # Piecewise remap: [0,30] → 0, [30,220] → linear stretch to [0,255], [220,255] → 255
+    lo, hi = 30.0, 220.0
+    alpha = np.clip((alpha - lo) / (hi - lo), 0.0, 1.0) * 255.0
+
+    out = arr.copy()
+    out[:, :, 3] = np.clip(alpha, 0, 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(out, mode="RGBA").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def remove_shadows(processed_png: bytes) -> bytes:
+    """Suppress soft drop-shadows: semi-transparent near-neutral pixels."""
+    img, arr = _alpha_channel(processed_png)
+    r = arr[:, :, 0].astype(np.float32)
+    g = arr[:, :, 1].astype(np.float32)
+    b = arr[:, :, 2].astype(np.float32)
+    a = arr[:, :, 3].astype(np.float32)
+
+    rgb_max = np.maximum(np.maximum(r, g), b)
+    rgb_min = np.minimum(np.minimum(r, g), b)
+    saturation = rgb_max - rgb_min
+    lightness = (rgb_max + rgb_min) / 2.0
+
+    # Shadow: semi-transparent + low saturation + not very dark
+    is_shadow = (a > 5) & (a < 210) & (saturation < 35) & (lightness > 55)
+
+    # Gamma-compress shadow pixels' alpha → push them toward transparent
+    decay = np.where(is_shadow, (a / 255.0) ** 2.5 * 255.0, a)
+
+    out = arr.copy()
+    out[:, :, 3] = np.clip(decay, 0, 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(out, mode="RGBA").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def apply_edge_feather(processed_png: bytes, radius: int) -> bytes:
+    """Gaussian blur on alpha channel only to soften hard edges."""
+    if radius <= 0:
+        return processed_png
+    img = Image.open(io.BytesIO(processed_png)).convert("RGBA")
+    r, g, b, a = img.split()
+    a = a.filter(ImageFilter.GaussianBlur(radius=radius))
+    buf = io.BytesIO()
+    Image.merge("RGBA", (r, g, b, a)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def apply_defringe(processed_png: bytes) -> bytes:
+    """Replace semi-transparent edge pixel colours with blurred interior colour.
+
+    This removes the colour halo ('fringe') left by the original background
+    bleeding into the transition zone.
+    """
+    img = Image.open(io.BytesIO(processed_png)).convert("RGBA")
+    arr = np.asarray(img, dtype=np.float32)
+    a = arr[:, :, 3] / 255.0
+
+    for c in range(3):
+        channel = Image.fromarray(arr[:, :, c].astype(np.uint8), mode="L")
+        blurred = channel.filter(ImageFilter.GaussianBlur(radius=2))
+        blurred_arr = np.asarray(blurred, dtype=np.float32)
+        # Only replace pixels in the semi-transparent fringe zone
+        mask = (a > 0.05) & (a < 0.90)
+        arr[:, :, c] = np.where(mask, blurred_arr, arr[:, :, c])
+
+    buf = io.BytesIO()
+    Image.fromarray(arr.astype(np.uint8), mode="RGBA").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def refine_logo_mask(processed_png: bytes) -> bytes:
+    """Binary-threshold the alpha for logos: ≥128 → 255, <128 → 0."""
+    img, arr = _alpha_channel(processed_png)
+    out = arr.copy()
+    out[:, :, 3] = np.where(arr[:, :, 3] >= 128, 255, 0).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(out, mode="RGBA").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# ─── Document / Signature helpers ─────────────────────────────────────────────
 
 def is_document_like_image(rgb_array: np.ndarray) -> bool:
     grayscale = np.round(
-        0.299 * rgb_array[:, :, 0] + 0.587 * rgb_array[:, :, 1] + 0.114 * rgb_array[:, :, 2]
+        0.299 * rgb_array[:, :, 0]
+        + 0.587 * rgb_array[:, :, 1]
+        + 0.114 * rgb_array[:, :, 2]
     ).astype(np.uint8)
     rgb_max = np.max(rgb_array, axis=2)
     rgb_min = np.min(rgb_array, axis=2)
@@ -165,12 +319,13 @@ def is_document_like_image(rgb_array: np.ndarray) -> bool:
 
     white_ratio = float(np.mean(grayscale >= DOCUMENT_WHITE_THRESHOLD))
     dark_ratio = float(np.mean(grayscale <= DOCUMENT_DARK_THRESHOLD))
-    low_saturation_ratio = float(np.mean(saturation <= DOCUMENT_LOW_SATURATION_THRESHOLD))
+    low_sat_ratio = float(np.mean(saturation <= DOCUMENT_LOW_SATURATION_THRESHOLD))
 
-    return white_ratio >= 0.45 and dark_ratio <= 0.35 and low_saturation_ratio >= 0.55
+    return white_ratio >= 0.45 and dark_ratio <= 0.35 and low_sat_ratio >= 0.55
 
 
 def preserve_document_strokes(source_image: bytes, processed_png: bytes) -> bytes:
+    """Recover ink strokes that rembg may have made transparent on paper."""
     source = Image.open(io.BytesIO(source_image)).convert("RGBA")
     result = Image.open(io.BytesIO(processed_png)).convert("RGBA")
 
@@ -182,14 +337,15 @@ def preserve_document_strokes(source_image: bytes, processed_png: bytes) -> byte
         return processed_png
 
     grayscale = np.round(
-        0.299 * source_rgb[:, :, 0] + 0.587 * source_rgb[:, :, 1] + 0.114 * source_rgb[:, :, 2]
+        0.299 * source_rgb[:, :, 0]
+        + 0.587 * source_rgb[:, :, 1]
+        + 0.114 * source_rgb[:, :, 2]
     ).astype(np.uint8)
     rgb_max = np.max(source_rgb, axis=2)
     rgb_min = np.min(source_rgb, axis=2)
     saturation = rgb_max - rgb_min
 
     existing_alpha = result_rgba[:, :, 3].astype(np.uint8)
-
     background_level = int(np.percentile(grayscale, DOCUMENT_BACKGROUND_PERCENTILE))
     dynamic_threshold = min(background_level - DOCUMENT_STROKE_MARGIN, DOCUMENT_MAX_STROKE_GRAYSCALE)
 
@@ -197,7 +353,7 @@ def preserve_document_strokes(source_image: bytes, processed_png: bytes) -> byte
         return processed_png
 
     stroke_delta = np.clip(background_level - grayscale, 0, 255).astype(np.uint8)
-    stroke_strength = np.clip(stroke_delta.astype(np.int16) * 12, 0, 255).astype(np.uint8)
+    stroke_strength = np.clip(stroke_delta.astype(np.int16) * 14, 0, 255).astype(np.uint8)
     stroke_mask = (
         (grayscale <= dynamic_threshold)
         & (saturation <= DOCUMENT_STROKE_SATURATION_THRESHOLD)
@@ -211,118 +367,12 @@ def preserve_document_strokes(source_image: bytes, processed_png: bytes) -> byte
     final_rgba[:, :, :3] = source_rgb
     final_rgba[:, :, 3] = rescued_alpha
 
-    buffer = io.BytesIO()
-    Image.fromarray(final_rgba, mode="RGBA").save(buffer, format="PNG")
-    return buffer.getvalue()
+    buf = io.BytesIO()
+    Image.fromarray(final_rgba, mode="RGBA").save(buf, format="PNG")
+    return buf.getvalue()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Shadow removal helper
-# ──────────────────────────────────────────────────────────────────────────────
-
-def remove_shadows(processed_png: bytes) -> bytes:
-    """Detect and remove soft drop-shadows from an RGBA image.
-
-    Shadows appear as semi-transparent near-neutral pixels surrounding the
-    foreground subject. We identify them by low saturation combined with
-    low-to-medium alpha and suppress their opacity.
-    """
-    img = Image.open(io.BytesIO(processed_png)).convert("RGBA")
-    arr = np.asarray(img, dtype=np.float32)
-
-    r, g, b, a = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2], arr[:, :, 3]
-
-    # Compute per-pixel saturation (0-255 scale)
-    rgb_max = np.maximum(np.maximum(r, g), b)
-    rgb_min = np.minimum(np.minimum(r, g), b)
-    saturation = rgb_max - rgb_min  # range 0-255
-
-    # Lightness (average)
-    lightness = (rgb_max + rgb_min) / 2.0
-
-    # Shadow heuristic: semi-transparent + low saturation + medium-light pixel
-    is_shadow = (
-        (a > 5) & (a < 200)          # semi-transparent
-        & (saturation < 30)           # nearly neutral gray
-        & (lightness > 60)            # not pure black (shadow, not ink)
-    )
-
-    # Suppress shadow pixels by multiplying their alpha by a decay factor
-    decay = np.where(is_shadow, (a / 255.0) ** 2.2 * 255.0, a)
-    out = arr.copy()
-    out[:, :, 3] = np.clip(decay, 0, 255)
-
-    buffer = io.BytesIO()
-    Image.fromarray(out.astype(np.uint8), mode="RGBA").save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Edge feathering / defringe helpers
-# ──────────────────────────────────────────────────────────────────────────────
-
-def apply_edge_feather(processed_png: bytes, radius: int) -> bytes:
-    """Smooth the alpha-channel edges by applying a small blur to the mask."""
-    if radius <= 0:
-        return processed_png
-    img = Image.open(io.BytesIO(processed_png)).convert("RGBA")
-    r, g, b, a = img.split()
-    # Blur only the alpha channel to soften hard edges
-    a_blurred = a.filter(ImageFilter.GaussianBlur(radius=radius))
-    result = Image.merge("RGBA", (r, g, b, a_blurred))
-    buffer = io.BytesIO()
-    result.save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
-def apply_defringe(processed_png: bytes) -> bytes:
-    """Remove color fringing (halo) artifacts left by the original background.
-
-    For each edge pixel, we sample the color from the fully-opaque interior
-    neighbours and blend toward that color proportional to semi-transparency.
-    This is a simplified 'despill' / decontamination pass.
-    """
-    img = Image.open(io.BytesIO(processed_png)).convert("RGBA")
-    arr = np.asarray(img, dtype=np.float32)
-
-    a = arr[:, :, 3] / 255.0  # normalised alpha 0-1
-
-    # Build a blurred version of the RGB channels weighted by alpha
-    pil_a = Image.fromarray((a * 255).astype(np.uint8), mode="L")
-    # Dilate the fully-opaque core colours by blurring
-    for c in range(3):
-        channel = Image.fromarray(arr[:, :, c].astype(np.uint8), mode="L")
-        blurred = channel.filter(ImageFilter.GaussianBlur(radius=3))
-        blurred_arr = np.asarray(blurred, dtype=np.float32)
-        # Replace semi-transparent pixel colours with blurred interior colour
-        mask = (a > 0.05) & (a < 0.85)
-        arr[:, :, c] = np.where(mask, blurred_arr, arr[:, :, c])
-
-    buffer = io.BytesIO()
-    Image.fromarray(arr.astype(np.uint8), mode="RGBA").save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Logo / graphic post-processing
-# ──────────────────────────────────────────────────────────────────────────────
-
-def refine_logo_mask(processed_png: bytes) -> bytes:
-    """Hard-threshold the alpha channel for logos/graphics to produce a clean,
-    binary mask without semi-transparent fringe artefacts."""
-    img = Image.open(io.BytesIO(processed_png)).convert("RGBA")
-    arr = np.asarray(img, dtype=np.uint8).copy()
-    alpha = arr[:, :, 3].astype(np.int16)
-    # Binarise: pixels >=128 become fully opaque, below become fully transparent
-    arr[:, :, 3] = np.where(alpha >= 128, 255, 0).astype(np.uint8)
-    buffer = io.BytesIO()
-    Image.fromarray(arr, mode="RGBA").save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Core pipeline
-# ──────────────────────────────────────────────────────────────────────────────
+# ─── Core removal pipeline ────────────────────────────────────────────────────
 
 def run_removal_pipeline(
     source_image: bytes,
@@ -332,44 +382,69 @@ def run_removal_pipeline(
     edge_feather: int,
     defringe: bool,
 ) -> bytes:
-    """Run the full background removal pipeline for the given mode and options."""
-    model_name = MODE_MODEL_MAP.get(mode, "isnet-general-use")
+    """Full background removal pipeline routed by mode.
+
+    Pipeline order:
+    1. rembg core segmentation (BiRefNet / isnet / u2net depending on mode)
+    2. Alpha mask cleanup (morphological closing/opening + noise cut)
+    3. Alpha contrast sharpening (push semi-transparent bleed toward 0/255)
+    4. Mode-specific passes (signature stroke rescue, logo binarise)
+    5. Optional: shadow removal
+    6. Optional: defringe (colour halo removal)
+    7. Optional: edge feather (Gaussian alpha blur)
+    """
+    model_name = MODE_MODEL_MAP.get(mode, "birefnet-general")
     session = new_session(model_name)
 
-    # rembg core removal
-    # Alpha matting is most useful for portraits (hair) and products
+    # Per-mode alpha matting thresholds
+    fg_thresh, bg_thresh, erode_sz = MODE_MATTING_PARAMS.get(mode, (240, 15, 10))
+
+    # Alpha matting is most beneficial for portraits and products where
+    # subject edges transition gradually (hair, fur, soft fabric).
     use_alpha_matting = alpha_matting and mode in ("portrait", "product", "auto")
 
     processed: bytes = remove(
         source_image,
         session=session,
         alpha_matting=use_alpha_matting,
-        alpha_matting_foreground_threshold=240,
-        alpha_matting_background_threshold=10,
-        alpha_matting_erode_size=10,
+        alpha_matting_foreground_threshold=fg_thresh,
+        alpha_matting_background_threshold=bg_thresh,
+        alpha_matting_erode_size=erode_sz,
     )
     if not isinstance(processed, bytes):
         raise TypeError("rembg.remove returned an unexpected payload type.")
 
-    # Mode-specific post-processing
+    # ── Step 2: always clean the mask ────────────────────────────────────────
+    processed = clean_alpha_mask(processed)
+
+    # ── Step 3: sharpen alpha contrast to kill semi-transparent bleed ─────────
+    # Skip for signature/logo which have their own binarisation logic.
+    if mode not in ("signature", "logo"):
+        processed = sharpen_alpha_contrast(processed)
+
+    # ── Step 4: mode-specific passes ─────────────────────────────────────────
     if mode == "signature":
         processed = preserve_document_strokes(source_image, processed)
     elif mode == "logo":
         processed = refine_logo_mask(processed)
         processed = apply_defringe(processed)
 
-    # Optional precision passes
+    # ── Step 5: optional shadow removal ───────────────────────────────────────
     if shadow_removal:
         processed = remove_shadows(processed)
 
-    if defringe and mode not in ("logo",):  # logo already defringed
+    # ── Step 6: optional defringe ─────────────────────────────────────────────
+    if defringe and mode not in ("logo",):
         processed = apply_defringe(processed)
 
+    # ── Step 7: optional edge feather ─────────────────────────────────────────
     if edge_feather > 0:
         processed = apply_edge_feather(processed, radius=edge_feather)
 
     return processed
 
+
+# ─── Celery task ──────────────────────────────────────────────────────────────
 
 @celery_app.task(
     bind=True,
@@ -395,6 +470,7 @@ def remove_background_task(
             "job_id": job_id,
             "image_url": image_url,
             "mode": mode,
+            "model": MODE_MODEL_MAP.get(mode, "birefnet-general"),
             "alpha_matting": alpha_matting,
             "shadow_removal": shadow_removal,
             "edge_feather": edge_feather,
