@@ -37,6 +37,10 @@ interface JobStatusResponse {
 
 interface JobHistoryResponse {
   jobs: JobStatusResponse[];
+  total_jobs: number;
+  total_pages: number;
+  page: number;
+  limit: number;
 }
 
 interface BatchItem {
@@ -159,6 +163,11 @@ export default function BackgroundRemover({
   const [showAllDone, setShowAllDone] = useState<boolean>(false);
   const [history, setHistory] = useState<JobStatusResponse[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(true);
+  const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
+  const [retryingJobIds, setRetryingJobIds] = useState<string[]>([]);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [totalJobs, setTotalJobs] = useState<number>(0);
 
   // Preview background toggle: transparent, white, black
   const [bgMode, setBgMode] = useState<'transparent' | 'white' | 'black'>('transparent');
@@ -233,16 +242,19 @@ export default function BackgroundRemover({
     [apiBaseUrl, uploadToR2],
   );
 
-  const fetchHistory = useCallback(async (): Promise<void> => {
+  const fetchHistory = useCallback(async (page: number = 1): Promise<void> => {
     setHistoryLoading(true);
     try {
       const response = await fetch(
-        `${apiBaseUrl}/api/media/history?user_id=${encodeURIComponent(userId)}&limit=24`,
+        `${apiBaseUrl}/api/media/history?user_id=${encodeURIComponent(userId)}&page=${page}&limit=20`,
         { method: 'GET', headers: { Accept: 'application/json' }, cache: 'no-store' },
       );
       if (!response.ok) throw new Error(`History error (${response.status})`);
       const payload = (await response.json()) as JobHistoryResponse;
       setHistory(payload.jobs);
+      setCurrentPage(payload.page);
+      setTotalPages(payload.total_pages);
+      setTotalJobs(payload.total_jobs);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to load history.';
       setGlobalError(message);
@@ -251,7 +263,7 @@ export default function BackgroundRemover({
     }
   }, [apiBaseUrl, userId]);
 
-  useEffect(() => { void fetchHistory(); }, [fetchHistory]);
+  useEffect(() => { void fetchHistory(1); }, [fetchHistory]);
 
   const processItem = useCallback(
     async (itemId: string, file: File, itemMode?: RemovalMode): Promise<void> => {
@@ -339,6 +351,115 @@ export default function BackgroundRemover({
     },
     [apiBaseUrl, fetchHistory, uploadSourceImage, userId, selectedMode, alphaMattingEnabled, shadowRemovalEnabled, edgeFeather, defringeEnabled],
   );
+
+  const toggleSelectJob = useCallback((jobId: string) => {
+    setSelectedJobIds((prev) =>
+      prev.includes(jobId) ? prev.filter((id) => id !== jobId) : [...prev, jobId]
+    );
+  }, []);
+
+  const toggleSelectAllJobs = useCallback(() => {
+    setSelectedJobIds((prev) => {
+      const currentPageIds = historyItems.map((job) => job.job_id);
+      const allSelected = currentPageIds.every((id) => prev.includes(id));
+      if (allSelected) {
+        return prev.filter((id) => !currentPageIds.includes(id));
+      } else {
+        const newSelection = [...prev];
+        currentPageIds.forEach((id) => {
+          if (!newSelection.includes(id)) newSelection.push(id);
+        });
+        return newSelection;
+      }
+    });
+  }, [historyItems]);
+
+  const handleDeleteSelectedJobs = useCallback(async () => {
+    if (selectedJobIds.length === 0) return;
+    if (!confirm(`Are you sure you want to delete ${selectedJobIds.length} selected history item(s)?`)) return;
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/media/jobs/batch-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_ids: selectedJobIds }),
+      });
+      if (!response.ok) throw new Error('Failed to delete selected history items.');
+      
+      setSelectedJobIds([]);
+      const remainingJobsOnPage = historyItems.filter((job) => !selectedJobIds.includes(job.job_id)).length;
+      let targetPage = currentPage;
+      if (remainingJobsOnPage === 0 && currentPage > 1) {
+        targetPage = currentPage - 1;
+      }
+      await fetchHistory(targetPage);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to delete items.';
+      setGlobalError(message);
+    }
+  }, [apiBaseUrl, selectedJobIds, currentPage, historyItems, fetchHistory]);
+
+  const handleDeleteJob = useCallback(async (jobId: string) => {
+    if (!confirm('Are you sure you want to delete this history item?')) return;
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/media/jobs/${jobId}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) throw new Error('Failed to delete history item.');
+      
+      setSelectedJobIds((prev) => prev.filter((id) => id !== jobId));
+      const remainingJobsOnPage = historyItems.filter((job) => job.job_id !== jobId).length;
+      let targetPage = currentPage;
+      if (remainingJobsOnPage === 0 && currentPage > 1) {
+        targetPage = currentPage - 1;
+      }
+      await fetchHistory(targetPage);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to delete item.';
+      setGlobalError(message);
+    }
+  }, [apiBaseUrl, currentPage, historyItems, fetchHistory]);
+
+  const handleRetry = useCallback(async (job: JobStatusResponse) => {
+    setRetryingJobIds((prev) => [...prev, job.job_id]);
+    try {
+      const deleteRes = await fetch(`${apiBaseUrl}/api/media/jobs/${job.job_id}`, {
+        method: 'DELETE',
+      });
+      if (!deleteRes.ok) throw new Error('Failed to delete old job from history');
+
+      await fetchHistory(currentPage);
+
+      const fileRes = await fetch(job.input_url);
+      if (!fileRes.ok) throw new Error('Failed to retrieve original image');
+      const blob = await fileRes.blob();
+      const filename = job.input_url.split('/').pop() || 'image.png';
+      const file = new File([blob], filename, { type: blob.type || 'image/png' });
+
+      const newId = Math.random().toString(36).substring(7);
+      const newItem: BatchItem = {
+        id: newId,
+        file,
+        localPreviewUrl: URL.createObjectURL(file),
+        jobId: null,
+        status: 'PENDING' as const,
+        outputUrl: null,
+        error: null,
+        progress: 0,
+        mode: selectedMode,
+      };
+
+      setItems((prev) => [...prev, newItem]);
+      setSelectedId(newId);
+      
+      void processItem(newId, file, selectedMode);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to retry job.';
+      setGlobalError(message);
+    } finally {
+      setRetryingJobIds((prev) => prev.filter((id) => id !== job.job_id));
+    }
+  }, [apiBaseUrl, fetchHistory, currentPage, selectedMode, processItem]);
 
   const addFiles = useCallback(
     (files: File[]): void => {
@@ -1103,22 +1224,51 @@ export default function BackgroundRemover({
 
         {/* ── History ── */}
         <section className="bg-white border border-[#E5E5E5] rounded-[12px] p-5">
-          <div className="flex items-center justify-between gap-3 border-b border-[#F0F0F0] pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#F0F0F0] pb-4">
             <div>
               <h2 className="text-[15px] font-medium text-[#111111]">History</h2>
               <p className="text-[12px] text-[#A3A3A3] mt-0.5">Past background removals for this workspace user.</p>
             </div>
             <button
               type="button"
-              onClick={() => void fetchHistory()}
+              onClick={() => void fetchHistory(currentPage)}
               className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] bg-transparent px-3 text-[13px] font-medium text-[#111111] transition-colors duration-100 hover:bg-[#F5F5F5]"
             >
               Refresh
             </button>
           </div>
 
+          {/* Selection Control Bar */}
+          {!historyLoading && historyItems.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#F0F0F0] py-3 bg-[#FAFAFA] px-5 -mx-5 mb-4 text-[13px]">
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 font-medium text-[#555] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={historyItems.length > 0 && historyItems.every((job) => selectedJobIds.includes(job.job_id))}
+                    onChange={toggleSelectAllJobs}
+                    className="h-4 w-4 rounded border-[#D1D5DB] text-[#111111] focus:ring-0 cursor-pointer accent-[#111111]"
+                  />
+                  Select All
+                </label>
+                {selectedJobIds.length > 0 && (
+                  <span className="text-[#737373] font-medium">({selectedJobIds.length} selected)</span>
+                )}
+              </div>
+              {selectedJobIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleDeleteSelectedJobs}
+                  className="inline-flex h-7.5 items-center justify-center rounded-[6px] bg-[#DC2626] px-3 text-[12px] font-medium text-white transition hover:bg-[#B91C1C]"
+                >
+                  Delete Selected
+                </button>
+              )}
+            </div>
+          )}
+
           {historyLoading ? (
-            <div className="grid gap-4 pt-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 pt-2 sm:grid-cols-2 xl:grid-cols-4">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="overflow-hidden rounded-[10px] border border-[#E5E5E5] bg-[#FCFCFC]">
                   <div className="aspect-[4/3] animate-pulse bg-[#F3F4F6]" />
@@ -1137,58 +1287,133 @@ export default function BackgroundRemover({
               </div>
             </div>
           ) : (
-            <div className="grid gap-4 pt-4 sm:grid-cols-2 xl:grid-cols-4">
-              {historyItems.map((job) => (
-                <article key={job.job_id} className="overflow-hidden rounded-[10px] border border-[#E5E5E5] bg-[#FCFCFC]">
-                  <div className="relative aspect-[4/3] overflow-hidden border-b border-[#EFEFEF] bg-checkerboard-classic">
-                    {job.status === 'COMPLETED' && job.output_url ? (
-                      <img src={job.output_url} alt="Processed result" className="h-full w-full object-contain" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-[#FEF2F2] text-[#DC2626]">
-                        <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.008v.008H12v-.008Zm8.25-.75a8.25 8.25 0 1 1-16.5 0 8.25 8.25 0 0 1 16.5 0Z" />
-                        </svg>
-                      </div>
-                    )}
-                    <span className={`absolute left-3 top-3 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${job.status === 'COMPLETED' ? 'bg-[#F0FDF4] text-[#16A34A]' : 'bg-[#FEF2F2] text-[#DC2626]'}`}>
-                      {job.status === 'COMPLETED' ? 'Completed' : 'Failed'}
-                    </span>
-                  </div>
+            <>
+              <div className="grid gap-4 pt-2 sm:grid-cols-2 xl:grid-cols-4">
+                {historyItems.map((job) => (
+                  <article key={job.job_id} className="relative overflow-hidden rounded-[10px] border border-[#E5E5E5] bg-[#FCFCFC]">
+                    {/* Card Checkbox */}
+                    <div className="absolute right-3 top-3 z-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedJobIds.includes(job.job_id)}
+                        onChange={() => toggleSelectJob(job.job_id)}
+                        className="h-4.5 w-4.5 rounded border-[#C2C2C2] text-[#111111] focus:ring-0 bg-white/95 shadow-sm cursor-pointer accent-[#111111]"
+                      />
+                    </div>
 
-                  <div className="space-y-3 p-3">
-                    <div className="space-y-1">
-                      <p className="truncate text-[13px] font-medium text-[#111111]">
-                        {job.input_url.split('/').pop() ?? job.job_id}
-                      </p>
-                      <p className="text-[12px] text-[#A3A3A3]">{formatHistoryDate(job.updated_at ?? job.created_at)}</p>
-                    </div>
-                    {job.status === 'FAILED' && job.error && (
-                      <p className="line-clamp-2 text-[12px] text-[#DC2626]">{job.error}</p>
-                    )}
-                    <div className="flex items-center gap-2">
-                      {job.output_url && (
-                        <a
-                          href={job.output_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex h-8 items-center justify-center rounded-[6px] bg-[#111111] px-3 text-[12px] font-medium text-white transition hover:bg-[#222222]"
-                        >
-                          Open PNG
-                        </a>
+                    <div className="relative aspect-[4/3] overflow-hidden border-b border-[#EFEFEF] bg-checkerboard-classic">
+                      {job.status === 'COMPLETED' && job.output_url ? (
+                        <img src={job.output_url} alt="Processed result" className="h-full w-full object-contain" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center bg-[#FEF2F2] text-[#DC2626]">
+                          <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.008v.008H12v-.008Zm8.25-.75a8.25 8.25 0 1 1-16.5 0 8.25 8.25 0 0 1 16.5 0Z" />
+                          </svg>
+                        </div>
                       )}
-                      <a
-                        href={job.input_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] px-3 text-[12px] font-medium text-[#111111] transition hover:bg-[#F5F5F5]"
-                      >
-                        Source
-                      </a>
+                      <span className={`absolute left-3 top-3 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${job.status === 'COMPLETED' ? 'bg-[#F0FDF4] text-[#16A34A]' : 'bg-[#FEF2F2] text-[#DC2626]'}`}>
+                        {job.status === 'COMPLETED' ? 'Completed' : 'Failed'}
+                      </span>
                     </div>
+
+                    <div className="space-y-3 p-3">
+                      <div className="space-y-1">
+                        <p className="truncate text-[13px] font-medium pr-6 text-[#111111]">
+                          {job.input_url.split('/').pop() ?? job.job_id}
+                        </p>
+                        <p className="text-[12px] text-[#A3A3A3]">{formatHistoryDate(job.updated_at ?? job.created_at)}</p>
+                      </div>
+                      {job.status === 'FAILED' && job.error && (
+                        <p className="line-clamp-2 text-[12px] text-[#DC2626]">{job.error}</p>
+                      )}
+                      
+                      <div className="flex items-center justify-between gap-2 border-t border-[#EFEFEF] pt-3 mt-3">
+                        <div className="flex items-center gap-1.5">
+                          {job.output_url && (
+                            <a
+                              href={job.output_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-8 items-center justify-center rounded-[6px] bg-[#111111] px-2.5 text-[12px] font-medium text-white transition hover:bg-[#222222]"
+                            >
+                              Open PNG
+                            </a>
+                          )}
+                          <a
+                            href={job.input_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] px-2.5 text-[12px] font-medium text-[#111111] transition hover:bg-[#F5F5F5]"
+                          >
+                            Source
+                          </a>
+                        </div>
+                        
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={retryingJobIds.includes(job.job_id)}
+                            onClick={() => void handleRetry(job)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] bg-white text-[#555] hover:text-[#111] hover:bg-[#F5F5F5] disabled:opacity-50 transition"
+                            title="Retry background removal with current settings"
+                          >
+                            {retryingJobIds.includes(job.job_id) ? (
+                              <svg className="animate-spin h-3.5 w-3.5 text-[#555]" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                              </svg>
+                            ) : (
+                              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                              </svg>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteJob(job.job_id)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-[6px] border border-[#FEE2E2] bg-white text-[#DC2626] hover:bg-[#FEF2F2] transition"
+                            title="Delete history entry"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              {/* Pagination controls */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between border-t border-[#F0F0F0] pt-4 mt-6">
+                  <p className="text-[13px] text-[#737373]">
+                    Showing page <span className="font-medium text-[#111]">{currentPage}</span> of{' '}
+                    <span className="font-medium text-[#111]">{totalPages}</span> ({totalJobs} items)
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={currentPage <= 1 || historyLoading}
+                      onClick={() => void fetchHistory(currentPage - 1)}
+                      className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] bg-white px-3 text-[13px] font-medium text-[#111111] transition hover:bg-[#F5F5F5] disabled:opacity-50 disabled:pointer-events-none"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      disabled={currentPage >= totalPages || historyLoading}
+                      onClick={() => void fetchHistory(currentPage + 1)}
+                      className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] bg-white px-3 text-[13px] font-medium text-[#111111] transition hover:bg-[#F5F5F5] disabled:opacity-50 disabled:pointer-events-none"
+                    >
+                      Next
+                    </button>
                   </div>
-                </article>
-              ))}
-            </div>
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>

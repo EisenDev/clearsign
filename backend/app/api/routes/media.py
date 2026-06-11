@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-from app.core.job_store import JobStatus, create_job, get_job, list_jobs_by_user
+from app.core.job_store import JobStatus, create_job, get_job, list_jobs_by_user, delete_job, delete_jobs
 from app.core.settings import get_settings
 from app.workers.bg_removal import remove_background_task
 
@@ -52,6 +52,10 @@ class JobStatusResponse(BaseModel):
 
 class JobHistoryResponse(BaseModel):
     jobs: list[JobStatusResponse]
+    total_jobs: int
+    total_pages: int
+    page: int
+    limit: int
 
 
 @router.post(
@@ -123,8 +127,60 @@ async def get_background_removal_job(job_id: str) -> JobStatusResponse:
 )
 async def get_background_removal_history(
     user_id: str = Query(..., min_length=1, max_length=128),
-    limit: int = 24,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
 ) -> JobHistoryResponse:
-    safe_limit = max(1, min(limit, 100))
-    job_records = list_jobs_by_user(user_id=user_id, limit=safe_limit)
-    return JobHistoryResponse(jobs=[JobStatusResponse(**asdict(job)) for job in job_records])
+    job_records, total_count = list_jobs_by_user(user_id=user_id, page=page, limit=limit)
+    import math
+    total_pages = math.ceil(total_count / limit)
+    return JobHistoryResponse(
+        jobs=[JobStatusResponse(**asdict(job)) for job in job_records],
+        total_jobs=total_count,
+        total_pages=total_pages,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.delete(
+    "/jobs/{job_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def delete_background_removal_job(job_id: str) -> dict[str, str]:
+    # Try to delete the local file if it exists
+    settings = get_settings()
+    local_path = settings.processed_dir / f"{job_id}.png"
+    try:
+        if local_path.exists():
+            local_path.unlink()
+    except Exception:
+        pass
+
+    deleted = delete_job(job_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job '{job_id}' was not found.",
+        )
+    return {"detail": f"Job '{job_id}' has been deleted."}
+
+
+class BatchDeleteRequest(BaseModel):
+    job_ids: list[str]
+
+
+@router.post(
+    "/jobs/batch-delete",
+    status_code=status.HTTP_200_OK,
+)
+async def batch_delete_jobs(payload: BatchDeleteRequest) -> dict[str, str]:
+    settings = get_settings()
+    for job_id in payload.job_ids:
+        local_path = settings.processed_dir / f"{job_id}.png"
+        try:
+            if local_path.exists():
+                local_path.unlink()
+        except Exception:
+            pass
+    deleted_count = delete_jobs(payload.job_ids)
+    return {"detail": f"Successfully deleted {deleted_count} jobs."}

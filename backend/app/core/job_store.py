@@ -149,20 +149,48 @@ def update_job(
     return updated
 
 
-def list_jobs_by_user(user_id: str, *, limit: int = 24) -> list[JobRecord]:
+def delete_job(job_id: str) -> bool:
     with _get_connection() as connection:
+        cursor = connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+        connection.commit()
+        return cursor.rowcount > 0
+
+
+def delete_jobs(job_ids: list[str]) -> int:
+    if not job_ids:
+        return 0
+    with _get_connection() as connection:
+        # SQLite maximum parameters is 999, which is plenty for history batch deletion.
+        placeholders = ",".join("?" for _ in job_ids)
+        cursor = connection.execute(
+            f"DELETE FROM jobs WHERE job_id IN ({placeholders})",
+            job_ids,
+        )
+        connection.commit()
+        return cursor.rowcount
+
+
+def list_jobs_by_user(user_id: str, *, page: int = 1, limit: int = 20) -> tuple[list[JobRecord], int]:
+    offset = (page - 1) * limit
+    with _get_connection() as connection:
+        count_row = connection.execute(
+            "SELECT COUNT(*) as total FROM jobs WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        total_count = count_row["total"] if count_row else 0
+
         rows = connection.execute(
             """
             SELECT job_id, user_id, status, input_url, output_url, error, created_at, updated_at
             FROM jobs
             WHERE user_id = ?
             ORDER BY COALESCE(updated_at, created_at) DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (user_id, limit),
+            (user_id, limit, offset),
         ).fetchall()
 
-    return [
+    jobs = [
         JobRecord(
             job_id=row["job_id"],
             user_id=row["user_id"],
@@ -175,3 +203,5 @@ def list_jobs_by_user(user_id: str, *, limit: int = 24) -> list[JobRecord]:
         )
         for row in rows
     ]
+    return jobs, total_count
+
