@@ -4,6 +4,11 @@ celery==5.5.3
 sqlalchemy==2.0.41
 requests==2.32.3
 boto3==1.38.32
-rembg==2.0.67
-onnxruntime==1.22.0
+rembg>=2.0.68
+onnxruntime>=1.22.0
 python-multipart==0.0.20
+opencv-python-headless
+Pillow
+# P12 Generator dependencies
+cryptography
+pydantic[email]

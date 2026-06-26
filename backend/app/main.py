@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.media import router as media_router
 from app.core.settings import get_settings
+from p12_generator.router import router as p12_router
 
 class CORSStaticFiles(StaticFiles):
     async def __call__(self, scope, receive, send) -> None:
@@ -35,6 +36,7 @@ app.add_middleware(
 )
 
 app.include_router(media_router)
+app.include_router(p12_router)
 app.mount("/storage", CORSStaticFiles(directory=Path(settings.storage_root)), name="storage")
 
 

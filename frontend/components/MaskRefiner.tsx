@@ -23,10 +23,11 @@ export default function MaskRefiner({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
 
-  const [brushMode, setBrushMode] = useState<'erase' | 'restore' | 'pan' | 'wand'>('pan');
+  const [brushMode, setBrushMode] = useState<'erase' | 'restore' | 'pan' | 'wand' | 'brush'>('pan');
   const [brushSize, setBrushSize] = useState<number>(20);
   const [wandTolerance, setWandTolerance] = useState<number>(30);
   const [wandAction, setWandAction] = useState<'erase' | 'restore'>('erase');
+  const [brushAction, setBrushAction] = useState<'erase' | 'restore'>('erase');
   const [underlayOpacity, setUnderlayOpacity] = useState<number>(0.35);
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
   const [lastPos, setLastPos] = useState<{ x: number; y: number } | null>(null);
@@ -40,6 +41,7 @@ export default function MaskRefiner({
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   // Keep references to loaded images
@@ -68,6 +70,7 @@ export default function MaskRefiner({
     setIsFullscreen(false);
     setSpacePressed(false);
     setIsPanning(false);
+    setShowResetConfirm(false);
 
     const originalImg = new Image();
     const processedImg = new Image();
@@ -430,7 +433,7 @@ export default function MaskRefiner({
       return;
     }
 
-    if (brushMode === 'pan' || brushMode === 'wand') return;
+    if (brushMode === 'pan' || brushMode === 'wand' || spacePressed) return;
 
     if (!isDrawing || !lastPos) return;
 
@@ -439,7 +442,8 @@ export default function MaskRefiner({
 
     ctx.save();
     
-    if (brushMode === 'erase') {
+    const isEraseAction = brushMode === 'erase' || (brushMode === 'brush' && brushAction === 'erase');
+    if (isEraseAction) {
       ctx.globalCompositeOperation = 'destination-out';
       ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
       ctx.lineWidth = brushSize;
@@ -538,9 +542,12 @@ export default function MaskRefiner({
   };
 
   const handleReset = () => {
-    if (undoStack.length === 0) return;
-    if (!confirm('Are you sure you want to reset all manual refinements?')) return;
+    if (undoStack.length === 0 || isSaving) return;
+    setShowResetConfirm(true);
+  };
 
+  const doReset = () => {
+    setShowResetConfirm(false);
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -556,6 +563,24 @@ export default function MaskRefiner({
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     };
+  };
+
+  const handleFit = () => {
+    if (!originalImageRef.current || !workspaceRef.current) {
+      setScale(1);
+      return;
+    }
+    const containerWidth = workspaceRef.current.clientWidth - 48;
+    const containerHeight = workspaceRef.current.clientHeight - 48;
+    const canvasWidth = canvasDimensions.width;
+    const canvasHeight = canvasDimensions.height;
+    if (canvasWidth === 0 || canvasHeight === 0) {
+      setScale(1);
+      return;
+    }
+    const scaleX = containerWidth / canvasWidth;
+    const scaleY = containerHeight / canvasHeight;
+    setScale(Math.min(1.5, Math.min(scaleX, scaleY)));
   };
 
   const handleApply = () => {
@@ -605,23 +630,30 @@ export default function MaskRefiner({
     : brushSize;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md p-0 md:p-4 select-none">
-      <div className={`relative bg-[#171717] overflow-hidden flex flex-col transition-all duration-200 ${
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm p-0 md:p-4 select-none">
+      <div className={`relative bg-white overflow-hidden flex flex-col transition-all duration-200 ${
         isFullscreen 
           ? "w-screen h-screen" 
-          : "w-full max-w-4xl rounded-[16px] border border-[#262626] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] max-h-[90vh]"
+          : "w-full max-w-6xl rounded-[16px] border border-[#E5E5E5] shadow-[0_20px_40px_-5px_rgba(0,0,0,0.08)] h-[85vh] max-h-[750px]"
       }`}>
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#262626] px-6 py-4">
-          <div>
-            <h3 className="text-[16px] font-semibold text-white">Manual Refinement Editor</h3>
-            <p className="text-[12px] text-[#A3A3A3] mt-0.5">Brush to erase leftovers or restore original details.</p>
+        <div className="flex items-center justify-between border-b border-[#E5E5E5] px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-[8px] bg-[#FAFAFA] border border-[#E5E5E5] text-[#111111] flex items-center justify-center">
+              <svg className="h-4.5 w-4.5 text-[#111111]" style={{ width: '18px', height: '18px' }} fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-[16px] font-semibold text-[#111111]">Refine & Clean</h3>
+              <p className="text-[12px] text-[#737373] mt-0.5">Remove unwanted areas or restore original details with precision.</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setIsFullscreen(!isFullscreen)}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-[#A3A3A3] hover:text-white hover:bg-[#262626] transition"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-[#737373] hover:text-[#111111] hover:bg-[#F5F5F5] transition"
               title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
             >
               {isFullscreen ? (
@@ -638,7 +670,7 @@ export default function MaskRefiner({
               type="button"
               onClick={onClose}
               disabled={isSaving}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-[#A3A3A3] hover:text-white hover:bg-[#262626] transition disabled:opacity-30"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-[#737373] hover:text-[#111111] hover:bg-[#F5F5F5] transition disabled:opacity-30"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -647,330 +679,446 @@ export default function MaskRefiner({
           </div>
         </div>
 
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#212121] border-b border-[#262626] px-4 py-2 text-[13px] text-white">
-          {/* Left group: Tools + Size/Tolerance */}
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Edit Mode Tool Buttons */}
-            <div className="flex p-0.5 rounded-[8px] bg-[#171717] border border-[#262626] shrink-0">
-              {/* Erase */}
+        {/* Two Column Workspace (Sidebar + Canvas) */}
+        <div className="flex-1 flex min-h-0 relative">
+          
+          {/* Left Sidebar */}
+          <div className="w-[280px] border-r border-[#E5E5E5] bg-white p-5 flex flex-col gap-5 overflow-y-auto shrink-0 select-none">
+            {/* Sidebar Tools list */}
+            <div className="flex flex-col gap-3">
+              <span className="text-[11px] font-bold text-[#737373] uppercase tracking-wider">Tools</span>
+              
+              {/* Erase Tool */}
               <button
                 type="button"
                 onClick={() => setBrushMode('erase')}
-                title="Eraser (Remove pixels) — E"
-                className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
+                className={`flex items-center gap-3 p-3 rounded-[10px] border text-left transition-all ${
                   brushMode === 'erase'
-                    ? 'bg-[#EF4444] text-white shadow-sm'
-                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#262626]'
+                    ? 'border-blue-600 bg-blue-50/30 text-[#111111]'
+                    : 'border-[#E5E5E5] bg-white text-[#525252] hover:border-[#D4D4D4] hover:bg-[#FAFAFA]'
                 }`}
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 20H7L3 16l11.293-11.293a1 1 0 011.414 0L20 9l-5 5 3 3 2-1v4z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 17.5l1-1" />
-                </svg>
+                <div className={`p-2 rounded-[8px] ${brushMode === 'erase' ? 'bg-blue-600 text-white' : 'bg-[#FAFAFA] text-[#737373]'}`}>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M20 20H7L3 16l11.293-11.293a1 1 0 011.414 0L20 9l-5 5 3 3 2-1v4z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-[13px] font-semibold text-[#111111]">Erase</p>
+                  <p className="text-[11px] text-[#737373] mt-0.5">Remove pixels</p>
+                </div>
               </button>
-              {/* Restore */}
+
+              {/* Restore Tool */}
               <button
                 type="button"
                 onClick={() => setBrushMode('restore')}
-                title="Restore (Reveal) — R"
-                className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
+                className={`flex items-center gap-3 p-3 rounded-[10px] border text-left transition-all ${
                   brushMode === 'restore'
-                    ? 'bg-[#22C55E] text-white shadow-sm'
-                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#262626]'
+                    ? 'border-blue-600 bg-blue-50/30 text-[#111111]'
+                    : 'border-[#E5E5E5] bg-white text-[#525252] hover:border-[#D4D4D4] hover:bg-[#FAFAFA]'
                 }`}
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
+                <div className={`p-2 rounded-[8px] ${brushMode === 'restore' ? 'bg-blue-600 text-white' : 'bg-[#FAFAFA] text-[#737373]'}`}>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-[13px] font-semibold text-[#111111]">Restore</p>
+                  <p className="text-[11px] text-[#737373] mt-0.5">Restore removed areas</p>
+                </div>
               </button>
-              {/* Magic Wand */}
-              <button
-                type="button"
-                onClick={() => setBrushMode('wand')}
-                title="Magic Wand — click area to erase or restore (toggle below)"
-                className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
-                  brushMode === 'wand'
-                    ? 'bg-purple-600 text-white shadow-sm'
-                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#262626]'
-                }`}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                </svg>
-              </button>
-              {/* Pan */}
+
+              {/* Magic Wand Tool */}
+              <div className="flex flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setBrushMode('wand')}
+                  className={`flex items-center gap-3 p-3 rounded-[10px] border text-left transition-all ${
+                    brushMode === 'wand'
+                      ? 'border-blue-600 bg-blue-50/30 text-[#111111]'
+                      : 'border-[#E5E5E5] bg-white text-[#525252] hover:border-[#D4D4D4] hover:bg-[#FAFAFA]'
+                  }`}
+                >
+                  <div className={`p-2 rounded-[8px] ${brushMode === 'wand' ? 'bg-blue-600 text-white' : 'bg-[#FAFAFA] text-[#737373]'}`}>
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-semibold text-[#111111]">Magic Wand</p>
+                    <p className="text-[11px] text-[#737373] mt-0.5">Select area to modify</p>
+                  </div>
+                </button>
+
+                {/* Submenu for Magic Wand */}
+                {brushMode === 'wand' && (
+                  <div className="flex flex-col gap-1 pl-4 border-l-2 border-blue-600 mt-1 ml-6">
+                    <button
+                      type="button"
+                      onClick={() => setWandAction('erase')}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-[6px] text-left text-[12px] font-semibold transition ${
+                        wandAction === 'erase'
+                          ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                          : 'text-[#525252] hover:bg-[#FAFAFA] hover:text-[#111111]'
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
+                      Erase with wand
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWandAction('restore')}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-[6px] text-left text-[12px] font-semibold transition ${
+                        wandAction === 'restore'
+                          ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                          : 'text-[#525252] hover:bg-[#FAFAFA] hover:text-[#111111]'
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+                      Restore with wand
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Brush Tool */}
+              <div className="flex flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setBrushMode('brush')}
+                  className={`flex items-center gap-3 p-3 rounded-[10px] border text-left transition-all ${
+                    brushMode === 'brush'
+                      ? 'border-blue-600 bg-blue-50/30 text-[#111111]'
+                      : 'border-[#E5E5E5] bg-white text-[#525252] hover:border-[#D4D4D4] hover:bg-[#FAFAFA]'
+                  }`}
+                >
+                  <div className={`p-2 rounded-[8px] ${brushMode === 'brush' ? 'bg-blue-600 text-white' : 'bg-[#FAFAFA] text-[#737373]'}`}>
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="4" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M18 8l-6 6" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-semibold text-[#111111]">Brush</p>
+                    <p className="text-[11px] text-[#737373] mt-0.5">Manually paint to edit</p>
+                  </div>
+                </button>
+
+                {/* Submenu for Brush */}
+                {brushMode === 'brush' && (
+                  <div className="flex flex-col gap-1 pl-4 border-l-2 border-blue-600 mt-1 ml-6">
+                    <button
+                      type="button"
+                      onClick={() => setBrushAction('erase')}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-[6px] text-left text-[12px] font-semibold transition ${
+                        brushAction === 'erase'
+                          ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                          : 'text-[#525252] hover:bg-[#FAFAFA] hover:text-[#111111]'
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
+                      Erase with brush
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBrushAction('restore')}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-[6px] text-left text-[12px] font-semibold transition ${
+                        brushAction === 'restore'
+                          ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                          : 'text-[#525252] hover:bg-[#FAFAFA] hover:text-[#111111]'
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+                      Restore with brush
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Settings and Reset */}
+            <div className="mt-auto pt-4 border-t border-[#E5E5E5] flex flex-col gap-4">
+              
+              {/* Brush / Wand Settings */}
+              <div>
+                <span className="text-[11px] font-bold text-[#737373] uppercase tracking-wider block mb-3">
+                  {brushMode === 'wand' ? 'Wand Settings' : 'Brush Settings'}
+                </span>
+                
+                {brushMode === 'wand' ? (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between text-[12px]">
+                      <span className="font-semibold text-[#737373]">Tolerance</span>
+                      <span className="font-bold text-blue-600 bg-[#FAFAFA] px-2 py-0.5 border border-[#E5E5E5] rounded font-mono">{wandTolerance}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={wandTolerance}
+                      onChange={(e) => setWandTolerance(parseInt(e.target.value))}
+                      className="w-full h-1.5 bg-[#E5E5E5] rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {/* Brush Size */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between text-[12px]">
+                        <span className="font-semibold text-[#737373]">Size</span>
+                        <span className="font-bold text-[#111111] bg-[#FAFAFA] px-2 py-0.5 border border-[#E5E5E5] rounded font-mono">{brushSize} px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="80"
+                        value={brushSize}
+                        onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                        className="w-full h-1.5 bg-[#E5E5E5] rounded-lg appearance-none cursor-pointer accent-blue-600"
+                      />
+                    </div>
+                    
+                    {/* Underlay Opacity */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between text-[12px]">
+                        <span className="font-semibold text-[#737373]">Opacity</span>
+                        <span className="font-bold text-[#111111] bg-[#FAFAFA] px-2 py-0.5 border border-[#E5E5E5] rounded font-mono">{Math.round(underlayOpacity * 100)} %</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={Math.round(underlayOpacity * 100)}
+                        onChange={(e) => setUnderlayOpacity(parseFloat(e.target.value) / 100)}
+                        className="w-full h-1.5 bg-[#E5E5E5] rounded-lg appearance-none cursor-pointer accent-blue-600"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Reset Button */}
+              {showResetConfirm ? (
+                <div className="flex flex-col gap-2 p-3 rounded-[8px] bg-[#FEF2F2] border border-[#FECACA]">
+                  <p className="text-[12px] font-semibold text-[#991B1B]">Reset all changes?</p>
+                  <p className="text-[11px] text-[#B91C1C]">This will revert to the original processed image.</p>
+                  <div className="flex gap-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowResetConfirm(false)}
+                      className="flex-1 h-8 rounded-[6px] border border-[#E5E5E5] bg-white text-[12px] font-semibold text-[#525252] transition hover:bg-[#FAFAFA]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={doReset}
+                      className="flex-1 h-8 rounded-[6px] bg-[#EF4444] text-[12px] font-semibold text-white transition hover:bg-[#DC2626]"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  disabled={undoStack.length <= 1 || isSaving}
+                  className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-[8px] border border-[#E5E5E5] bg-white text-[13px] font-semibold text-[#111111] transition hover:bg-[#FAFAFA] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                  </svg>
+                  Reset
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Right/Center Canvas Workspace */}
+          <div className="flex-1 flex flex-col min-h-0 bg-[#FAFAFA] relative">
+            
+            {/* Top Toolbar */}
+            <div className="h-12 border-b border-[#E5E5E5] bg-white px-4 flex items-center justify-center gap-3 shrink-0 relative select-none">
+              
+              {/* Undo / Redo */}
+              <div className="flex items-center gap-1 border-r border-[#E5E5E5] pr-3 mr-1">
+                <button
+                  type="button"
+                  onClick={handleUndo}
+                  disabled={undoStack.length <= 1 || isSaving}
+                  title="Undo"
+                  className="h-8 w-8 rounded-[6px] border border-[#E5E5E5] bg-white hover:bg-[#F5F5F5] transition flex items-center justify-center disabled:opacity-30 disabled:hover:bg-white"
+                >
+                  <svg className="h-4 w-4 text-[#111111]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRedo}
+                  disabled={redoStack.length === 0 || isSaving}
+                  title="Redo"
+                  className="h-8 w-8 rounded-[6px] border border-[#E5E5E5] bg-white hover:bg-[#F5F5F5] transition flex items-center justify-center disabled:opacity-30 disabled:hover:bg-white"
+                >
+                  <svg className="h-4 w-4 text-[#111111]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Hand tool */}
               <button
                 type="button"
                 onClick={() => setBrushMode('pan')}
-                title="Pan / Drag — Space"
-                className={`h-8 w-8 rounded-[6px] flex items-center justify-center transition ${
+                className={`h-8 w-8 rounded-[6px] border flex items-center justify-center transition ${
                   brushMode === 'pan'
-                    ? 'bg-[#3B82F6] text-white shadow-sm'
-                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#262626]'
+                    ? 'bg-blue-50 border-blue-600 text-blue-600 shadow-sm'
+                    : 'border-[#E5E5E5] bg-white text-[#737373] hover:text-[#111111] hover:bg-[#F5F5F5]'
                 }`}
+                title="Hand Tool (Pan / Drag) — Space"
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0V11" />
                 </svg>
               </button>
-            </div>
 
-            {/* Tool mode label */}
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${
-              brushMode === 'erase' ? 'bg-[#EF4444]/20 text-[#EF4444]' :
-              brushMode === 'restore' ? 'bg-[#22C55E]/20 text-[#22C55E]' :
-              brushMode === 'wand' ? (wandAction === 'erase' ? 'bg-[#EF4444]/20 text-[#EF4444]' : 'bg-[#22C55E]/20 text-[#22C55E]') :
-              'bg-[#3B82F6]/20 text-[#3B82F6]'
-            }`}>
-              {brushMode === 'erase' ? 'Eraser' :
-               brushMode === 'restore' ? 'Restore Brush' :
-               brushMode === 'wand' ? `Wand • ${wandAction === 'erase' ? 'Erase' : 'Restore'}` :
-               'Pan'}
-            </span>
-
-            {/* Separator */}
-            <div className="w-px h-6 bg-[#262626] shrink-0" />
-
-            {/* Brush Size / Wand Controls */}
-            {brushMode === 'wand' ? (
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="flex p-0.5 rounded-[6px] bg-[#171717] border border-[#262626] text-[11px] shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setWandAction('erase')}
-                    className={`px-2 py-1 rounded-[4px] font-semibold transition ${
-                      wandAction === 'erase' ? 'bg-[#EF4444] text-white shadow-sm' : 'text-[#A3A3A3] hover:text-white'
-                    }`}
-                  >
-                    Erase
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setWandAction('restore')}
-                    className={`px-2 py-1 rounded-[4px] font-semibold transition ${
-                      wandAction === 'restore' ? 'bg-[#22C55E] text-white shadow-sm' : 'text-[#A3A3A3] hover:text-white'
-                    }`}
-                  >
-                    Restore
-                  </button>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[#A3A3A3] text-[11px] font-medium">Tol:</span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={wandTolerance}
-                    onChange={(e) => setWandTolerance(parseInt(e.target.value))}
-                    className="w-20 h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
-                  />
-                  <span className="font-bold tabular-nums text-[11px] text-white w-7 text-right">{wandTolerance}</span>
-                </div>
+              {/* Zoom Dropdown */}
+              <div className="flex items-center gap-1.5 border border-[#E5E5E5] px-2 py-1 rounded-[6px] bg-white shrink-0">
+                <svg className="h-3.5 w-3.5 text-[#737373]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <select
+                  value={Math.round(scale * 100)}
+                  onChange={(e) => setScale(Number(e.target.value) / 100)}
+                  className="bg-transparent text-[12px] font-semibold text-[#111111] focus:outline-none cursor-pointer pr-1"
+                >
+                  {(() => {
+                    const currentPct = Math.round(scale * 100);
+                    const standardPcts = [50, 75, 100, 125, 150, 200, 300, 400];
+                    if (!standardPcts.includes(currentPct)) {
+                      return [...standardPcts, currentPct].sort((a, b) => a - b).map((z) => (
+                        <option key={z} value={z}>{z}%</option>
+                      ));
+                    }
+                    return standardPcts.map((z) => (
+                      <option key={z} value={z}>{z}%</option>
+                    ));
+                  })()}
+                </select>
               </div>
-            ) : brushMode !== 'pan' ? (
-              <div className="flex items-center gap-1.5 shrink-0">
-                <svg className="h-3.5 w-3.5 text-[#A3A3A3]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <circle cx="12" cy="12" r="4" />
-                </svg>
-                <input
-                  type="range"
-                  min="1"
-                  max="80"
-                  value={brushSize}
-                  onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                  className="w-20 h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
-                />
-                <span className="font-bold tabular-nums text-[11px] text-white w-8 text-right">{brushSize}px</span>
-              </div>
-            ) : (
-              <span className="text-[11px] text-[#737373]">Hold Space + drag to pan freely</span>
-            )}
 
-            {/* Separator */}
-            <div className="w-px h-6 bg-[#262626] shrink-0" />
-
-            {/* Zoom Controls */}
-            <div className="flex items-center gap-1 shrink-0">
+              {/* Fit Button */}
               <button
                 type="button"
-                onClick={() => setScale((prev) => Math.max(0.4, prev / 1.15))}
-                className="h-7 w-7 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center text-white font-bold"
-                title="Zoom Out (scroll down)"
+                onClick={handleFit}
+                className="h-8 px-3 rounded-[6px] border border-[#E5E5E5] bg-white text-[12px] text-[#737373] hover:text-[#111111] hover:bg-[#F5F5F5] font-semibold transition"
+                title="Fit to screen"
               >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM13.5 10.5h-6" />
-                </svg>
-              </button>
-              <span className="font-semibold tabular-nums text-[11px] w-10 text-center">{Math.round(scale * 100)}%</span>
-              <button
-                type="button"
-                onClick={() => setScale((prev) => Math.min(6, prev * 1.15))}
-                className="h-7 w-7 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center text-white font-bold"
-                title="Zoom In (scroll up)"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => setScale(1)}
-                className="h-7 px-2 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition text-[10px] text-[#A3A3A3] hover:text-white font-medium"
-                title="Reset Zoom to 100%"
-              >
-                1:1
+                Fit
               </button>
             </div>
-          </div>
 
-          {/* Right group: Undo / Redo / Reset */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={handleUndo}
-              disabled={undoStack.length <= 1 || isSaving}
-              title="Undo"
-              className="h-8 w-8 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center disabled:opacity-30 disabled:hover:bg-[#171717]"
+            {/* Canvas Workspace Area */}
+            <div 
+              ref={workspaceRef}
+              className="flex-1 p-6 overflow-auto relative flex select-none bg-[#F3F4F6]"
             >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={handleRedo}
-              disabled={redoStack.length === 0 || isSaving}
-              title="Redo"
-              className="h-8 w-8 rounded-[6px] border border-[#262626] bg-[#171717] hover:bg-[#262626] transition flex items-center justify-center disabled:opacity-30 disabled:hover:bg-[#171717]"
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={handleReset}
-              disabled={undoStack.length <= 1 || isSaving}
-              className="h-8 px-3 rounded-[6px] border border-[#262626]/40 hover:bg-[#EF4444]/10 hover:border-[#EF4444]/30 hover:text-[#EF4444] transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-white"
-              title="Reset Editor"
-            >
-              Reset
-            </button>
-          </div>
-        </div>
-
-        {/* Canvas Workspace */}
-        <div 
-          ref={workspaceRef}
-          className="flex-1 bg-[#0A0A0A] p-6 overflow-auto min-h-[300px] relative flex"
-        >
-          {isLoading && (
-            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#0A0A0A] text-[#A3A3A3]">
-              <div className="flex h-8 w-8 animate-spin rounded-full border-2 border-[#262626] border-t-white mb-3" />
-              <span>Loading workspace assets...</span>
-            </div>
-          )}
-          
-          <div 
-            className="m-auto flex flex-col items-center gap-4"
-            style={{ 
-              visibility: isLoading ? 'hidden' : 'visible',
-              opacity: isLoading ? 0 : 1,
-              pointerEvents: isLoading ? 'none' : 'auto'
-            }}
-          >
-            {/* Canvas viewport container */}
-            <div
-              ref={containerRef}
-              className={`relative bg-checkerboard-classic border border-[#262626] rounded-[8px] overflow-hidden shadow-2xl ${
-                spacePressed ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-none'
-              }`}
-              style={{
-                width: canvasDimensions.width * scale,
-                height: canvasDimensions.height * scale,
-              }}
-              onMouseEnter={() => setShowCursor(true)}
-              onMouseLeave={() => {
-                setShowCursor(false);
-                handleEndDraw();
-              }}
-            >
-              {/* 1. Underlay (Original source image at low opacity) */}
-              <img
-                src={originalImageUrl}
-                alt="Original underlay"
-                className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
-                style={{ opacity: underlayOpacity }}
-              />
-
-              {/* 2. Main interactive drawing canvas */}
-              <canvas
-                ref={canvasRef}
-                onMouseDown={handleStartDraw}
-                onMouseMove={handleDraw}
-                onMouseUp={handleEndDraw}
-                onTouchStart={handleStartDraw}
-                onTouchMove={handleDraw}
-                onTouchEnd={handleEndDraw}
-                className="relative z-10 w-full h-full object-contain block bg-transparent"
-              />
-
-              {/* 3. Brush Size or Crosshair Hover Cursor */}
-              {showCursor && !spacePressed && (
-                brushMode === 'wand' ? (
-                  <div
-                    className="absolute z-20 pointer-events-none flex items-center justify-center"
-                    style={{
-                      left: cursorPos.x - 12,
-                      top: cursorPos.y - 12,
-                      width: 24,
-                      height: 24,
-                    }}
-                  >
-                    <div className="absolute h-4 w-0.5 bg-white shadow-md" />
-                    <div className="absolute w-4 h-0.5 bg-white shadow-md" />
-                    <div className="h-1.5 w-1.5 rounded-full bg-purple-500 shadow-md border border-white" />
-                  </div>
-                ) : (
-                  <div
-                    className="absolute z-20 rounded-full pointer-events-none transition-shadow border border-white shadow-[0_0_8px_rgba(0,0,0,0.6)]"
-                    style={{
-                      left: cursorPos.x - displayBrushSize / 2,
-                      top: cursorPos.y - displayBrushSize / 2,
-                      width: displayBrushSize,
-                      height: displayBrushSize,
-                      backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(34, 197, 94, 0.25)',
-                      borderColor: brushMode === 'erase' ? '#EF4444' : '#22C55E',
-                    }}
-                  />
-                )
+              {isLoading && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#FAFAFA] text-[#737373]">
+                  <div className="flex h-8 w-8 animate-spin rounded-full border-2 border-[#E5E5E5] border-t-blue-600 mb-3" />
+                  <span>Loading workspace assets...</span>
+                </div>
               )}
+              
+              <div 
+                className="m-auto flex flex-col items-center gap-4"
+                style={{ 
+                  visibility: isLoading ? 'hidden' : 'visible',
+                  opacity: isLoading ? 0 : 1,
+                  pointerEvents: isLoading ? 'none' : 'auto'
+                }}
+              >
+                {/* Canvas viewport container */}
+                <div
+                  ref={containerRef}
+                  className={`relative bg-checkerboard-classic border border-[#E5E5E5] rounded-[8px] overflow-hidden shadow-lg ${
+                    (brushMode === 'pan' || spacePressed)
+                      ? (isPanning ? 'cursor-grabbing' : 'cursor-grab')
+                      : 'cursor-none'
+                  }`}
+                  style={{
+                    width: canvasDimensions.width * scale,
+                    height: canvasDimensions.height * scale,
+                  }}
+                  onMouseEnter={() => setShowCursor(true)}
+                  onMouseLeave={() => {
+                    setShowCursor(false);
+                    handleEndDraw();
+                  }}
+                >
+                  {/* 1. Underlay (Original source image at low opacity) */}
+                  <img
+                    src={originalImageUrl}
+                    alt="Original underlay"
+                    className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
+                    style={{ opacity: underlayOpacity }}
+                  />
+
+                  {/* 2. Main interactive drawing canvas */}
+                  <canvas
+                    ref={canvasRef}
+                    onMouseDown={handleStartDraw}
+                    onMouseMove={handleDraw}
+                    onMouseUp={handleEndDraw}
+                    onTouchStart={handleStartDraw}
+                    onTouchMove={handleDraw}
+                    onTouchEnd={handleEndDraw}
+                    className="relative z-10 w-full h-full object-contain block bg-transparent"
+                  />
+
+                  {/* 3. Brush Size or Crosshair Hover Cursor */}
+                  {showCursor && !spacePressed && (
+                    brushMode === 'wand' ? (
+                      <div
+                        className="absolute z-20 pointer-events-none flex items-center justify-center"
+                        style={{
+                          left: cursorPos.x - 12,
+                          top: cursorPos.y - 12,
+                          width: 24,
+                          height: 24,
+                        }}
+                      >
+                        <div className="absolute h-4 w-0.5 bg-[#111111] shadow-sm" />
+                        <div className="absolute w-4 h-0.5 bg-[#111111] shadow-sm" />
+                        <div className="h-1.5 w-1.5 rounded-full bg-purple-500 shadow-md border border-white" />
+                      </div>
+                    ) : (
+                      <div
+                        className="absolute z-20 rounded-full pointer-events-none transition-shadow border border-[#111111] shadow-[0_0_4px_rgba(255,255,255,0.8)]"
+                        style={{
+                          left: cursorPos.x - displayBrushSize / 2,
+                          top: cursorPos.y - displayBrushSize / 2,
+                          width: displayBrushSize,
+                          height: displayBrushSize,
+                          backgroundColor: (brushMode === 'erase' || (brushMode === 'brush' && brushAction === 'erase')) ? 'rgba(239, 68, 68, 0.25)' : 'rgba(34, 197, 94, 0.25)',
+                          borderColor: (brushMode === 'erase' || (brushMode === 'brush' && brushAction === 'erase')) ? '#EF4444' : '#22C55E',
+                        }}
+                      />
+                    )
+                  )}
+                </div>
+              </div>
             </div>
 
-            {/* Opacity Control slider and shortcuts below canvas */}
-            <div className="flex flex-wrap items-center justify-between gap-4 w-full max-w-2xl bg-[#171717] px-4 py-2 border border-[#262626] rounded-[8px] text-[12px] text-white">
-              <div className="flex items-center gap-3 flex-1 min-w-[200px]">
-                <span className="text-[#A3A3A3] font-medium whitespace-nowrap">Original Image Underlay Opacity:</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={Math.round(underlayOpacity * 100)}
-                  onChange={(e) => setUnderlayOpacity(parseFloat(e.target.value) / 100)}
-                  className="w-full h-1 bg-[#262626] rounded-lg appearance-none cursor-pointer accent-white"
-                />
-                <span className="font-semibold tabular-nums w-8 text-right">{Math.round(underlayOpacity * 100)}%</span>
-              </div>
-              <div className="text-[#A3A3A3] text-[11px] font-medium flex items-center gap-1 pl-4 border-l border-[#262626] h-5">
-                <span>💡 Scroll to Zoom. Hold Space + Drag to Pan.</span>
-              </div>
-            </div>
           </div>
+
         </div>
 
         {/* Footer Actions */}
-        <div className="border-t border-[#262626] px-6 py-4 flex items-center justify-between bg-[#111111]">
+        <div className="border-t border-[#E5E5E5] px-6 py-4 flex items-center justify-between bg-[#FAFAFA] shrink-0">
           <div className="text-[12px] text-[#EF4444] max-w-md font-medium">
             {error && `Error: ${error}`}
           </div>
@@ -979,7 +1127,7 @@ export default function MaskRefiner({
               type="button"
               onClick={onClose}
               disabled={isSaving}
-              className="inline-flex h-9 items-center justify-center rounded-[6px] border border-[#262626] bg-transparent px-4 text-[13px] font-medium text-white transition hover:bg-[#262626] disabled:opacity-40"
+              className="inline-flex h-9 items-center justify-center rounded-[6px] border border-[#E5E5E5] bg-white px-4 text-[13px] font-medium text-[#111111] transition hover:bg-[#F5F5F5] disabled:opacity-40"
             >
               Cancel
             </button>
@@ -987,7 +1135,7 @@ export default function MaskRefiner({
               type="button"
               onClick={handleApply}
               disabled={isLoading || isSaving}
-              className="inline-flex h-9 items-center justify-center rounded-[6px] bg-[#EF4444] hover:bg-[#DC2626] px-5 text-[13px] font-semibold text-white transition shadow-lg shadow-[#EF4444]/15 disabled:opacity-40"
+              className="inline-flex h-9 items-center justify-center rounded-[6px] bg-blue-600 hover:bg-blue-700 px-5 text-[13px] font-semibold text-white transition shadow-lg shadow-blue-600/15 disabled:opacity-40"
             >
               {isSaving ? (
                 <>
@@ -995,7 +1143,7 @@ export default function MaskRefiner({
                   Saving...
                 </>
               ) : (
-                'Save Changes'
+                'Apply Changes'
               )}
             </button>
           </div>
@@ -1003,4 +1151,4 @@ export default function MaskRefiner({
       </div>
     </div>
   );
-}
+};

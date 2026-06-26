@@ -69,13 +69,19 @@ h1, h2, h3, h4, h5, h6, label, button, .section-label {
 
 /* Custom scanning animation for processing state */
 @keyframes scan {
-  0% { transform: translateY(0); }
-  50% { transform: translateY(380px); }
-  100% { transform: translateY(0); }
+  0% { top: 0%; }
+  50% { top: 100%; }
+  100% { top: 0%; }
 }
 
 .scanner-line {
-  animation: scan 2s ease-in-out infinite;
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #2563EB 20%, #60A5FA 50%, #2563EB 80%, transparent);
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.7);
+  animation: scan 2.5s ease-in-out infinite;
 }
 
 /* Classic 8px Checkerboard Pattern (Light Mode) */
