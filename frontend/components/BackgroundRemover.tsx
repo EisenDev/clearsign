@@ -1,10 +1,12 @@
 'use client';
 
-import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, ChangeEvent, DragEvent } from 'react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import Link from 'next/link';
+import Header from './Header';
 import MaskRefiner from './MaskRefiner';
+import { addRecentActivity } from '../utils/recentActivities';
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -405,6 +407,11 @@ export default function BackgroundRemover({
                 : i
             )
           );
+          
+          addRecentActivity({
+            name: `Processed ${file.name}`,
+            tool: 'Background Remover'
+          });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Local privacy processing failed.';
           setItems((prev) =>
@@ -482,6 +489,12 @@ export default function BackgroundRemover({
               i.id === itemId ? { ...i, status: 'COMPLETED', outputUrl: finalJob!.output_url, progress: 100 } : i,
             ),
           );
+          
+          addRecentActivity({
+            name: `Processed ${file.name}`,
+            tool: 'Background Remover'
+          });
+          
           await fetchHistory();
           if (mode === 'custom') {
             setRefineParams({
@@ -1033,71 +1046,12 @@ export default function BackgroundRemover({
   // ─── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <section className="flex w-full flex-col text-[#111111] min-h-screen pb-12 bg-[#FAFAFA]">
+    <section className="flex w-full flex-col text-[#111111] min-h-screen bg-[#FAFAFA]">
       {/* ── Header ── */}
-      <header className="sticky top-0 z-50 flex h-[56px] items-center justify-between border-b border-[#E5E5E5] bg-white px-6 w-full">
-        <div className="flex w-full items-center justify-between">
-          {/* Left section: Logo + Tabs */}
-          <div className="flex items-center gap-8">
-            {/* Logo */}
-            <div className="flex items-center gap-2">
-              <svg 
-                style={{ width: '24px', height: '24px' }} 
-                className="h-6 w-6 text-[#111111] shrink-0" 
-                viewBox="0 0 24 24" 
-                fill="none" 
-                stroke="currentColor" 
-                strokeWidth="2.2" 
-                strokeLinecap="round"
-              >
-                <path d="M21 12V8a5 5 0 0 0-5-5H8a5 5 0 0 0-5 5v8a5 5 0 0 0 5 5h4" />
-                <path d="M12 21h4a5 5 0 0 0 5-5v-4" strokeDasharray="3 3" />
-              </svg>
-              <h1 className="text-[16px] font-bold text-[#111111] leading-none select-none tracking-tight">Infosoft Utility Tools</h1>
-            </div>
-
-            {/* Navigation Tabs */}
-            <nav className="flex items-center h-[56px]">
-              <button
-                type="button"
-                className="relative flex items-center gap-2 px-4 h-full text-[14px] font-semibold text-[#111111] border-b-2 border-blue-600 bg-transparent transition-colors"
-              >
-                {/* Background remover icon - clean 2x2 grid */}
-                <svg 
-                  style={{ width: '16px', height: '16px' }} 
-                  className="h-4 w-4 text-blue-600 shrink-0" 
-                  viewBox="0 0 24 24" 
-                  fill="currentColor"
-                >
-                  <rect x="3" y="3" width="7" height="7" rx="1.5" />
-                  <rect x="14" y="3" width="7" height="7" rx="1.5" />
-                  <rect x="3" y="14" width="7" height="7" rx="1.5" />
-                  <rect x="14" y="14" width="7" height="7" rx="1.5" />
-                </svg>
-                <span>Background remover</span>
-              </button>
-              <Link
-                href="/p12-generator"
-                className="flex items-center gap-2 px-4 h-full text-[14px] font-medium text-[#737373] hover:text-[#111111] border-b-2 border-transparent hover:border-[#D4D4D4] transition-colors"
-              >
-                {/* P12 Generator Shield Icon */}
-                <svg 
-                  style={{ width: '16px', height: '16px' }} 
-                  className="h-4 w-4 text-[#737373] shrink-0" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  strokeWidth="2.2" 
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-                <span>P12 Generator</span>
-              </Link>
-            </nav>
-          </div>
-
-          {/* Right section: Search + Privacy + Add Files + Profile */}
-          <div className="flex items-center gap-4">
+      <Header 
+        activePage="background-remover"
+        rightContent={
+          <>
             {/* Search Tools Input */}
             <div className="relative w-[180px] sm:w-[220px]">
               <svg 
@@ -1113,29 +1067,26 @@ export default function BackgroundRemover({
               <input
                 type="text"
                 placeholder="Search tools..."
-                className="w-full h-8 pl-8 pr-3 text-[12px] bg-[#F4F4F4] hover:bg-[#EBEBEB] focus:bg-white border border-transparent focus:border-[#D4D4D4] rounded-full transition-all focus:outline-none placeholder-[#A3A3A3]"
+                className="h-8 w-full pl-8 pr-3 text-[12px] bg-[#F4F4F5] border border-transparent rounded-[8px] focus:outline-none focus:bg-white focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-all placeholder:text-[#A3A3A3] font-medium"
               />
             </div>
-
-
-
+            <div className="w-px h-5 bg-[#E5E5E5]"></div>
             {/* Add Files Button */}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="inline-flex h-8 items-center justify-center rounded-[6px] border border-[#E5E5E5] bg-white px-3.5 text-[13px] font-semibold text-[#111111] hover:bg-[#F5F5F5] transition gap-1.5"
+              className="h-8 px-4 bg-white border border-[#E5E5E5] hover:border-[#2563EB] hover:text-[#2563EB] text-[#111111] text-[12px] font-bold rounded-[8px] transition-all shadow-sm flex items-center gap-1.5"
             >
-              <span>+ Add files</span>
+              <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+              Add files
             </button>
             <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFileChange} />
-
-
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {/* ── Main content ── */}
-      <div className="w-full px-8 mt-6 flex flex-col gap-6">
+      <div className="w-full px-8 mt-6 flex flex-col gap-6 pb-12">
 
         {/* Global Error Banner */}
         {globalError && (

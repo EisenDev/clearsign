@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - PROJECT_NAME=AI Media Processor
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - BACKEND_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+    volumes:
+      - backend_storage:/app/storage
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    command: ["python", "-m", "celery", "-A", "app.workers.bg_removal:celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    environment:
+      - ENVIRONMENT=production
+      - PROJECT_NAME=AI Media Processor
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    volumes:
+      - backend_storage:/app/storage
+    depends_on:
+      - redis
+      - backend
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+volumes:
+  redis_data:
+  backend_storage:

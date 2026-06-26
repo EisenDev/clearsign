@@ -1,6 +1,7 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
   images: {
     remotePatterns: [
       {
@@ -12,6 +13,12 @@ const nextConfig: NextConfig = {
       {
         protocol: 'http',
         hostname: 'localhost',
+        port: '8000',
+        pathname: '/storage/**',
+      },
+      {
+        protocol: 'http',
+        hostname: 'backend',
         port: '8000',
         pathname: '/storage/**',
       },

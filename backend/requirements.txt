@@ -12,3 +12,4 @@ Pillow
 # P12 Generator dependencies
 cryptography
 pydantic[email]
+redis
